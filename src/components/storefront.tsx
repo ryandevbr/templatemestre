@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
+  NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   getDefaultBannerAlt,
   getMaterialLabel,
@@ -32,6 +33,7 @@ import {
   getWhatsappUrl,
   hasActivePhysicalStore,
   isFashionNiche,
+  isFootwearNiche,
 } from "@/config/store.config";
 import { useStore } from "@/services/storeService";
 import {
@@ -97,6 +99,7 @@ export function Storefront() {
   const [slide, setSlide] = useState(0);
 
   const isModa = isFashionNiche();
+  const isCalcados = isFootwearNiche();
   const materialLabel = getMaterialLabel();
   const physicalStore = STORE_CONFIG.physicalStore;
   const hasPhysicalStore = hasActivePhysicalStore();
@@ -198,12 +201,13 @@ export function Storefront() {
   }
 
   const activeProducts = data.products.filter((p) => p.active);
+  const nicheDefaults = NICHE_CATALOG_DEFAULTS[STORE_CONFIG.niche];
   const dynamicMaterials = mergeOptionValues(
-    materialNames,
+    materialNames.length > 0 ? materialNames : [...nicheDefaults.materials],
     activeProducts.map((p) => p.material),
   );
   const dynamicCategories = mergeOptionValues(
-    categoryNames,
+    categoryNames.length > 0 ? categoryNames : [...nicheDefaults.categories],
     activeProducts.map((p) => p.category),
   );
   const filters = [
@@ -306,24 +310,46 @@ export function Storefront() {
           "Consulte as condições e prazos diretamente em nosso atendimento pelo WhatsApp.",
         ],
       ]
-    : [
-        [
-          "Como cuidar da Prata 925?",
-          "Limpe com flanela macia e guarde em local seco, separada de outras peças.",
-        ],
-        [
-          "Como cuidar das Semijoias?",
-          "Evite perfumes, produtos químicos, banho e piscina. Guarde cada peça individualmente.",
-        ],
-        [
-          "Sobre a garantia",
-          "Consulte as condições e os prazos de cada peça em nosso atendimento pelo WhatsApp.",
-        ],
-      ];
+    : isCalcados
+      ? [
+          [
+            "Como cuidar dos seus calçados?",
+            "Limpe com pano macio levemente umedecido, evite exposição prolongada ao sol e guarde em local arejado.",
+          ],
+          [
+            "Dúvidas sobre numeração e calce?",
+            "Consulte as numerações disponíveis no produto ou fale conosco no WhatsApp para ajuda na escolha ideal.",
+          ],
+          [
+            "Trocas e devoluções",
+            "Consulte as condições e prazos diretamente em nosso atendimento pelo WhatsApp.",
+          ],
+        ]
+      : [
+          [
+            "Como cuidar da Prata 925?",
+            "Limpe com flanela macia e guarde em local seco, separada de outras peças.",
+          ],
+          [
+            "Como cuidar das Semijoias?",
+            "Evite perfumes, produtos químicos, banho e piscina. Guarde cada peça individualmente.",
+          ],
+          [
+            "Sobre a garantia",
+            "Consulte as condições e os prazos de cada peça em nosso atendimento pelo WhatsApp.",
+          ],
+        ];
 
   const trustHighlights: Array<[typeof Truck, string]> = [
     [Truck, "Para todo o Brasil"],
-    [Sparkles, isModa ? "Moda Feminina selecionada" : "Prata 925 & Semijoias"],
+    [
+      Sparkles,
+      isModa
+        ? "Moda Feminina selecionada"
+        : isCalcados
+          ? "Calçados selecionados"
+          : "Prata 925 & Semijoias",
+    ],
     hasPhysicalStore && physicalStore
       ? [MapPin, physicalStore.title]
       : [Heart, "Curadoria feita com carinho"],
@@ -332,7 +358,11 @@ export function Storefront() {
 
   const aboutTitle =
     STORE_CONFIG.aboutTitle ??
-    (isModa ? "Mais que moda, um pouco de você." : "Mais que acessórios, um pouco de você.");
+    (isModa
+      ? "Mais que moda, um pouco de você."
+      : isCalcados
+        ? "Conforto e estilo a cada passo."
+        : "Mais que acessórios, um pouco de você.");
   const aboutText =
     STORE_CONFIG.aboutText ??
     "Nossa curadoria reúne estilo, qualidade e atendimento personalizado com envio para todo o Brasil.";
@@ -518,12 +548,18 @@ export function Storefront() {
           <div className="text-center">
             <p className="eyebrow text-primary mb-3">Encontre seu próximo favorito</p>
             <h2 className="section-title">
-              {isModa ? "Looks para chamar de seus" : "Um brilho para chamar de seu"}
+              {isModa
+                ? "Looks para chamar de seus"
+                : isCalcados
+                  ? "Passos cheios de estilo"
+                  : "Um brilho para chamar de seu"}
             </h2>
             <p className="text-sm text-muted-foreground mt-3">
               {isModa
                 ? "Modelagens atemporais, conforto e estilo em cada detalhe."
-                : "Pequenos detalhes. Grandes encantos."}
+                : isCalcados
+                  ? "Conforto, acabamento e personalidade em cada escolha."
+                  : "Pequenos detalhes. Grandes encantos."}
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-2 mt-8">
@@ -766,7 +802,7 @@ export function Storefront() {
               <div>
                 <ShieldCheck size={21} className="text-primary mb-3" />
                 <h3 className="text-xl text-foreground">
-                  {isModa ? "Cuidados e atendimento" : "Cuidados e garantia"}
+                  {isModa || isCalcados ? "Cuidados e atendimento" : "Cuidados e garantia"}
                 </h3>
                 {careItems.map(([question, answer]) => (
                   <details key={question} className="border-b py-3">
@@ -1016,7 +1052,7 @@ export function Storefront() {
             Sua sacola <span className="text-primary">({count})</span>
           </DialogTitle>
           <DialogDescription className="text-xs mt-2">
-            {isModa
+            {isModa || isCalcados
               ? "Suas escolhas favoritas prontas para finalizar."
               : "Um brilho especial está a caminho."}
           </DialogDescription>

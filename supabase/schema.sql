@@ -179,7 +179,9 @@ create trigger trg_admin_profiles_updated_at
   for each row execute function public.set_updated_at();
 
 -- ----------------------------------------------------------------------------
--- 5. Registros iniciais padrão (configurações + categorias/materiais)
+-- 5. Registros iniciais padrão (configurações da loja)
+--    A tabela public.catalog_options permanece vazia na criação do banco para
+--    receber o auto-seed da aplicação conforme STORE_CONFIG.niche.
 -- ----------------------------------------------------------------------------
 insert into public.store_settings (id, announcement_active, announcement_text, announcement_link)
 values (
@@ -189,18 +191,6 @@ values (
   '#vitrine'
 )
 on conflict (id) do nothing;
-
-insert into public.catalog_options (type, name)
-values
-  ('category', 'Anéis'),
-  ('category', 'Colares'),
-  ('category', 'Brincos'),
-  ('category', 'Pulseiras'),
-  ('category', 'Tornozeleiras'),
-  ('category', 'Conjuntos'),
-  ('material', 'Prata 925'),
-  ('material', 'Semijoia')
-on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
 -- 6. Permissões de schema e Row Level Security (RLS) nas tabelas

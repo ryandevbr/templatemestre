@@ -14,14 +14,12 @@ import {
   STORE_CONFIG,
   applyStoreTheme,
   buildRootThemeCss,
-  isFashionNiche,
+  getNicheDisplayName,
 } from "@/config/store.config";
 
 import appCss from "../styles.css?url";
 
-const defaultMetaTitle = `${STORE_CONFIG.name} — ${
-  isFashionNiche() ? "Moda Feminina" : "Acessórios & Semijoias"
-}`;
+const defaultMetaTitle = `${STORE_CONFIG.name} — ${getNicheDisplayName()}`;
 const defaultMetaDescription = STORE_CONFIG.hero.subtitle;
 
 function NotFoundComponent() {

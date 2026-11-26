@@ -41,17 +41,19 @@ import {
   uploadStoreImage,
 } from "@/services/storageService";
 import {
-  QUICK_SIZES,
+  NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   getDefaultBannerAlt,
   getMaterialLabel,
   getMaterialLabelPlural,
+  getNicheDisplayName,
+  getQuickSizesForNiche,
   isFashionNiche,
+  isFootwearNiche,
+  supportsSizes,
   toggleQuickSize,
 } from "@/config/store.config";
 import {
-  DEFAULT_CATEGORIES,
-  DEFAULT_MATERIALS,
   money,
   priceOf,
   type AdminProfile,
@@ -97,7 +99,8 @@ export function AdminPanel() {
     materialNames,
     addOption,
     removeOption,
-  } = useCatalogOptions({ enabled: allowed });
+    applyNicheDefaults,
+  } = useCatalogOptions({ enabled: allowed, autoSeed: true });
 
   const [tab, setTab] = useState("Produtos");
   const [query, setQuery] = useState("");
@@ -126,6 +129,7 @@ export function AdminPanel() {
   const [manageCategoryInput, setManageCategoryInput] = useState("");
   const [manageMaterialInput, setManageMaterialInput] = useState("");
   const [removingOptionId, setRemovingOptionId] = useState<string | null>(null);
+  const [applyingDefaults, setApplyingDefaults] = useState(false);
   const [announcementDraft, setAnnouncementDraft] = useState<StoreAnnouncement>(data.announcement);
   const [promoDraft, setPromoDraft] = useState<StorePromotion>(data.promotion);
   const [profileDraft, setProfileDraft] = useState<AdminProfile>(data.profile);
@@ -134,6 +138,14 @@ export function AdminPanel() {
   const productModalSessionRef = useRef(0);
 
   const isModa = isFashionNiche();
+  const isCalcados = isFootwearNiche();
+  const showSizes = supportsSizes();
+  const availableQuickSizes = getQuickSizesForNiche();
+  const nicheDefaults = NICHE_CATALOG_DEFAULTS[STORE_CONFIG.niche];
+  const effectiveCategoryNames =
+    categoryNames.length > 0 ? categoryNames : [...nicheDefaults.categories];
+  const effectiveMaterialNames =
+    materialNames.length > 0 ? materialNames : [...nicheDefaults.materials];
   const materialLabel = getMaterialLabel();
   const materialLabelLower = materialLabel.toLowerCase();
   const materialLabelPlural = getMaterialLabelPlural();
@@ -197,8 +209,12 @@ export function AdminPanel() {
 
     setSaving(true);
     try {
-      await saveProduct(edit);
-      cleanupPendingUploads(edit.image_url);
+      const productToSave: Product = {
+        ...edit,
+        sizes: showSizes ? edit.sizes : [],
+      };
+      await saveProduct(productToSave);
+      cleanupPendingUploads(productToSave.image_url);
       setEdit(null);
       toast.success("Produto salvo!");
     } catch (err) {
@@ -231,9 +247,9 @@ export function AdminPanel() {
     }
 
     const availableCategories =
-      formCategories.length > 0 ? formCategories : mergeOptionValues(categoryNames);
+      formCategories.length > 0 ? formCategories : mergeOptionValues(effectiveCategoryNames);
     const availableMaterials =
-      formMaterials.length > 0 ? formMaterials : mergeOptionValues(materialNames);
+      formMaterials.length > 0 ? formMaterials : mergeOptionValues(effectiveMaterialNames);
 
     setAnalyzingAi(true);
     try {
@@ -251,11 +267,11 @@ export function AdminPanel() {
         if (!prev) return prev;
 
         const validCategories = ensureOptionPresent(
-          mergeOptionValues(categoryNames, prev.category ? [prev.category] : []),
+          mergeOptionValues(effectiveCategoryNames, prev.category ? [prev.category] : []),
           prev.category,
         );
         const validMaterials = ensureOptionPresent(
-          mergeOptionValues(materialNames, prev.material ? [prev.material] : []),
+          mergeOptionValues(effectiveMaterialNames, prev.material ? [prev.material] : []),
           prev.material,
         );
 
@@ -414,6 +430,24 @@ export function AdminPanel() {
     }
   };
 
+  const nicheDisplayLabel = getNicheDisplayName();
+
+  const handleApplyNicheDefaults = async () => {
+    setApplyingDefaults(true);
+    try {
+      await applyNicheDefaults(STORE_CONFIG.niche);
+      setCategory("");
+      setMaterial("");
+      toast.success(`Padrões de ${nicheDisplayLabel} aplicados!`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Não foi possível aplicar os padrões do nicho.",
+      );
+    } finally {
+      setApplyingDefaults(false);
+    }
+  };
+
   const newProduct = () => {
     productModalSessionRef.current += 1;
     lastProductFileRef.current = null;
@@ -422,14 +456,8 @@ export function AdminPanel() {
     setSizeInfo("");
     setInlineOptionType(null);
     setInlineOptionValue("");
-    const defaultCategory =
-      !isModa && categoryNames.includes("Brincos")
-        ? "Brincos"
-        : (categoryNames[0] ?? DEFAULT_CATEGORIES[0] ?? "");
-    const defaultMaterial =
-      !isModa && materialNames.includes("Semijoia")
-        ? "Semijoia"
-        : (materialNames[0] ?? DEFAULT_MATERIALS[0] ?? "");
+    const defaultCategory = effectiveCategoryNames[0] ?? nicheDefaults.categories[0] ?? "";
+    const defaultMaterial = effectiveMaterialNames[0] ?? nicheDefaults.materials[0] ?? "";
     setEdit({
       id: crypto.randomUUID(),
       name: "",
@@ -451,27 +479,27 @@ export function AdminPanel() {
   };
 
   const filterCategories = mergeOptionValues(
-    categoryNames,
+    effectiveCategoryNames,
     data.products.map((p) => p.category),
   );
   const filterMaterials = mergeOptionValues(
-    materialNames,
+    effectiveMaterialNames,
     data.products.map((p) => p.material),
   );
   const formCategories = ensureOptionPresent(
-    mergeOptionValues(categoryNames, edit?.category ? [edit.category] : []),
+    mergeOptionValues(effectiveCategoryNames, edit?.category ? [edit.category] : []),
     edit?.category,
   );
   const formMaterials = ensureOptionPresent(
-    mergeOptionValues(materialNames, edit?.material ? [edit.material] : []),
+    mergeOptionValues(effectiveMaterialNames, edit?.material ? [edit.material] : []),
     edit?.material,
   );
   const bannerFilterOptions = ensureOptionPresent(
     [
       "Promoções",
       ...mergeOptionValues([
-        ...materialNames,
-        ...categoryNames,
+        ...effectiveMaterialNames,
+        ...effectiveCategoryNames,
         ...data.products.flatMap((p) => [p.material, p.category]),
       ]),
     ],
@@ -672,7 +700,7 @@ export function AdminPanel() {
                     <p className="text-[11px] text-muted-foreground mt-1">
                       {p.sku ? `${p.sku} · ` : ""}
                       {p.category} · {p.material}
-                      {p.sizes.length > 0 ? ` · Tam: ${p.sizes.join(", ")}` : ""}
+                      {showSizes && p.sizes.length > 0 ? ` · Tam: ${p.sizes.join(", ")}` : ""}
                     </p>
                     <div className="flex gap-3 mt-3 flex-wrap">
                       {(["active", "featured", "in_stock"] as const).map((key, i) => (
@@ -725,7 +753,7 @@ export function AdminPanel() {
                         setAutoFillOnUpload(false);
                         setEdit({
                           ...structuredClone(p),
-                          sizes: Array.isArray(p.sizes) ? [...p.sizes] : [],
+                          sizes: showSizes && Array.isArray(p.sizes) ? [...p.sizes] : [],
                         });
                         setSizeInfo("");
                         setInlineOptionType(null);
@@ -1297,7 +1325,13 @@ export function AdminPanel() {
                         type="text"
                         aria-label="Nova categoria"
                         className="text-base h-10"
-                        placeholder="Ex.: Tornozeleiras"
+                        placeholder={
+                          isModa
+                            ? "Ex.: Blazers, Jaquetas"
+                            : isCalcados
+                              ? "Ex.: Scarpins, Mules"
+                              : "Ex.: Tornozeleiras"
+                        }
                         value={inlineOptionValue}
                         onChange={(e) => setInlineOptionValue(e.target.value)}
                         onKeyDown={(e) => {
@@ -1371,7 +1405,11 @@ export function AdminPanel() {
                         aria-label={`Novo ${materialLabelLower}`}
                         className="text-base h-10"
                         placeholder={
-                          isModa ? "Ex.: Alfaiataria, Linho, Crepe" : "Ex.: Aço Inox, Ródio Branco"
+                          isModa
+                            ? "Ex.: Alfaiataria, Linho, Crepe"
+                            : isCalcados
+                              ? "Ex.: Couro, Camurça, Napa"
+                              : "Ex.: Aço Inox, Ródio Branco"
                         }
                         value={inlineOptionValue}
                         onChange={(e) => setInlineOptionValue(e.target.value)}
@@ -1423,55 +1461,57 @@ export function AdminPanel() {
                   Gerenciar opções
                 </button>
               </div>
-              <div className="space-y-2.5 rounded-lg border bg-muted/25 p-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-foreground">
-                    Tamanhos disponíveis (opcional)
-                  </p>
-                  {edit.sizes.length > 0 && (
-                    <button
-                      type="button"
-                      className="text-[11px] font-medium text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                      onClick={() => setEdit({ ...edit, sizes: [] })}
-                    >
-                      Limpar ({edit.sizes.length})
-                    </button>
-                  )}
-                </div>
-                <div
-                  className="flex flex-wrap gap-2"
-                  role="group"
-                  aria-label="Tamanhos disponíveis"
-                >
-                  {QUICK_SIZES.map((size) => {
-                    const selected = edit.sizes.includes(size);
-                    return (
+              {showSizes && (
+                <div className="space-y-2.5 rounded-lg border bg-muted/25 p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-foreground">
+                      Tamanhos disponíveis (opcional)
+                    </p>
+                    {edit.sizes.length > 0 && (
                       <button
-                        key={size}
                         type="button"
-                        aria-pressed={selected}
-                        onClick={() =>
-                          setEdit({
-                            ...edit,
-                            sizes: toggleQuickSize(edit.sizes, size),
-                          })
-                        }
-                        className={`min-h-8 min-w-10 rounded-md border px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
-                          selected
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-border bg-background text-foreground hover:border-primary/60 hover:text-primary"
-                        }`}
+                        className="text-[11px] font-medium text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                        onClick={() => setEdit({ ...edit, sizes: [] })}
                       >
-                        {size}
+                        Limpar ({edit.sizes.length})
                       </button>
-                    );
-                  })}
+                    )}
+                  </div>
+                  <div
+                    className="flex flex-wrap gap-2"
+                    role="group"
+                    aria-label="Tamanhos disponíveis"
+                  >
+                    {availableQuickSizes.map((size) => {
+                      const selected = edit.sizes.includes(size);
+                      return (
+                        <button
+                          key={size}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setEdit({
+                              ...edit,
+                              sizes: toggleQuickSize(edit.sizes, size),
+                            })
+                          }
+                          className={`min-h-8 min-w-10 rounded-md border px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                            selected
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border bg-background text-foreground hover:border-primary/60 hover:text-primary"
+                          }`}
+                        >
+                          {size}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Selecione os tamanhos disponíveis para esta peça ou deixe vazio se não houver
+                    variação de tamanho.
+                  </p>
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Selecione os tamanhos disponíveis para esta peça ou deixe vazio caso seja um item
-                  sem tamanho (ex.: acessórios).
-                </p>
-              </div>
+              )}
               <div className="flex gap-4 flex-wrap">
                 {(["active", "featured", "in_stock"] as const).map((key, i) => (
                   <label className="flex gap-2 items-center" key={key}>
@@ -1875,6 +1915,32 @@ export function AdminPanel() {
             Adicione ou remova opções da lista de seleção. Produtos já cadastrados mantêm o texto
             salvo mesmo se uma opção for excluída.
           </DialogDescription>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">
+              Substitui as listas atuais pelos padrões de{" "}
+              <strong className="text-foreground">{nicheDisplayLabel}</strong>.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="border-primary/40 text-primary hover:bg-primary hover:text-primary-foreground"
+              disabled={applyingDefaults || savingOption || removingOptionId !== null}
+              onClick={() => void handleApplyNicheDefaults()}
+            >
+              {applyingDefaults ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Aplicando...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={13} />
+                  Aplicar padrões de {nicheDisplayLabel}
+                </>
+              )}
+            </Button>
+          </div>
           <div className="overflow-y-auto min-h-0 space-y-6 pr-1">
             <section className="space-y-3">
               <h3 className="text-xl">Categorias</h3>
@@ -2053,8 +2119,8 @@ export function AdminPanel() {
       <BatchImportDialog
         open={batchOpen}
         onOpenChange={setBatchOpen}
-        categoryNames={categoryNames}
-        materialNames={materialNames}
+        categoryNames={effectiveCategoryNames}
+        materialNames={effectiveMaterialNames}
         saveProduct={saveProduct}
       />
     </main>

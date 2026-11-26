@@ -1,10 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Storefront } from "@/components/storefront";
-import { STORE_CONFIG, isFashionNiche } from "@/config/store.config";
+import { STORE_CONFIG, getNicheDisplayName } from "@/config/store.config";
 
-const pageTitle = `${STORE_CONFIG.name} | ${
-  isFashionNiche() ? "Moda Feminina" : "Acessórios & Semijoias"
-}`;
+const pageTitle = `${STORE_CONFIG.name} | ${getNicheDisplayName()}`;
 
 export const Route = createFileRoute("/")({
   head: () => ({

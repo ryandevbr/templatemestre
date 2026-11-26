@@ -138,6 +138,7 @@ describe("POST /api/analyze-product multi-provider cascade", () => {
       body: JSON.stringify({
         imageBase64: SAMPLE_BASE64,
         mimeType: "image/webp",
+        niche: "acessorios",
         availableCategories: ["Brincos", "Colares"],
         availableMaterials: ["Prata 925", "Semijoia"],
       }),
@@ -249,6 +250,9 @@ describe("POST /api/analyze-product multi-provider cascade", () => {
         imageBase64: SAMPLE_BASE64,
         mimeType: "image/webp",
         niche: "moda",
+        // Even if stale accessories options are passed, moda must strip them and enforce fashion defaults
+        availableCategories: ["Anéis", "Brincos", "Colares"],
+        availableMaterials: ["Prata 925", "Semijoia"],
       }),
     });
 
@@ -258,11 +262,75 @@ describe("POST /api/analyze-product multi-provider cascade", () => {
     expect(capturedBody).toContain("Vestidos");
     expect(capturedBody).toContain("Alfaiataria");
     expect(capturedBody).toContain("caimento, ocasião de uso e conforto");
+    expect(capturedBody).not.toContain("Anéis");
+    expect(capturedBody).not.toContain("Brincos");
+    expect(capturedBody).not.toContain("Prata 925");
+    expect(capturedBody).not.toContain("Semijoia");
 
     const json = (await res.json()) as {
       data: { name: string; category: string; material: string };
     };
     expect(json.data.category).toBe("Vestidos");
     expect(json.data.material).toBe("Linho");
+  });
+
+  it("adapts prompt and strips accessory terms for niche 'calcados'", async () => {
+    process.env["GROQ_API_KEY"] = "groq-test";
+
+    let capturedBody = "";
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      capturedBody = typeof init?.body === "string" ? init.body : "";
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  name: "Sandália Salto Bloco Napa",
+                  category: "Sandálias",
+                  material: "Napa",
+                  description:
+                    "Sandália confortável de calce macio e estilo atemporal, perfeita para o trabalho e eventos.",
+                  characteristics: [
+                    { label: "Material", value: "Napa" },
+                    { label: "Salto", value: "Bloco" },
+                    { label: "Ocasião", value: "Dia a dia e eventos" },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const req = new Request("http://localhost/api/analyze-product", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: SAMPLE_BASE64,
+        mimeType: "image/webp",
+        niche: "calcados",
+        availableCategories: ["Anéis", "Brincos", "Colares"],
+        availableMaterials: ["Prata 925", "Semijoia"],
+      }),
+    });
+
+    const res = await handleAnalyzeProductRequest(req);
+    expect(res.status).toBe(200);
+    expect(capturedBody).toContain("Calçados");
+    expect(capturedBody).toContain("Sandálias");
+    expect(capturedBody).toContain("Couro");
+    expect(capturedBody).not.toContain("Anéis");
+    expect(capturedBody).not.toContain("Brincos");
+    expect(capturedBody).not.toContain("Prata 925");
+    expect(capturedBody).not.toContain("Semijoia");
+
+    const json = (await res.json()) as {
+      data: { name: string; category: string; material: string };
+    };
+    expect(json.data.category).toBe("Sandálias");
+    expect(json.data.material).toBe("Napa");
   });
 });

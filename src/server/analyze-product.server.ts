@@ -1,7 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import {
-  NICHE_DEFAULT_CATEGORIES,
-  NICHE_DEFAULT_MATERIALS,
+  NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   type StoreNiche,
 } from "@/config/store.config";
@@ -394,8 +393,76 @@ function matchAllowedOptionWithFallback(value: unknown, allowed: string[]): stri
   return exact ?? fallback;
 }
 
+function normalizeKeyNoAccents(value: string): string {
+  return value
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+const MODA_CATEGORY_KEYS = new Set(
+  NICHE_CATALOG_DEFAULTS.moda.categories.map(normalizeKeyNoAccents),
+);
+const CALCADOS_CATEGORY_KEYS = new Set(
+  NICHE_CATALOG_DEFAULTS.calcados.categories.map(normalizeKeyNoAccents),
+);
+
+function buildForbiddenAccessoryCategories(allowedKeys: Set<string>): Set<string> {
+  return new Set([
+    ...NICHE_CATALOG_DEFAULTS.acessorios.categories
+      .map(normalizeKeyNoAccents)
+      .filter((key) => !allowedKeys.has(key)),
+    "joias",
+    "semijoias",
+    "bijuterias",
+    "acessorios",
+  ]);
+}
+
+const FORBIDDEN_MODA_CATEGORIES = buildForbiddenAccessoryCategories(MODA_CATEGORY_KEYS);
+const FORBIDDEN_CALCADOS_CATEGORIES = buildForbiddenAccessoryCategories(CALCADOS_CATEGORY_KEYS);
+
+const FORBIDDEN_NON_ACCESSORY_MATERIALS = new Set([
+  ...NICHE_CATALOG_DEFAULTS.acessorios.materials.map(normalizeKeyNoAccents),
+  "semijoias",
+  "prata",
+  "banho de ouro",
+  "banhado a ouro",
+  "ouro 18k",
+  "rodio branco",
+]);
+
+function sanitizeOptionsForNiche(
+  input: unknown,
+  niche: StoreNiche,
+  kind: "categories" | "materials",
+): string[] {
+  const defaults = [...NICHE_CATALOG_DEFAULTS[niche][kind]];
+  const cleaned = sanitizeOptionList(input, []);
+  if (cleaned.length === 0) return defaults;
+
+  if (niche === "acessorios") {
+    return cleaned;
+  }
+
+  const forbidden =
+    kind === "materials"
+      ? FORBIDDEN_NON_ACCESSORY_MATERIALS
+      : niche === "calcados"
+        ? FORBIDDEN_CALCADOS_CATEGORIES
+        : FORBIDDEN_MODA_CATEGORIES;
+  const hadForbidden = cleaned.some((item) => forbidden.has(normalizeKeyNoAccents(item)));
+  const safe = cleaned.filter((item) => !forbidden.has(normalizeKeyNoAccents(item)));
+
+  if (safe.length === 0 || hadForbidden) {
+    return sanitizeOptionList([...defaults, ...safe], defaults);
+  }
+  return safe;
+}
+
 function resolveNiche(raw: unknown): StoreNiche {
-  if (raw === "moda" || raw === "acessorios") return raw;
+  if (raw === "moda" || raw === "acessorios" || raw === "calcados") return raw;
   return STORE_CONFIG.niche;
 }
 
@@ -405,10 +472,11 @@ function buildSystemPrompt(categories: string[], materials: string[], niche: Sto
       `Você é a especialista em curadoria de moda feminina e copywriting da loja brasileira '${STORE_CONFIG.name}'.`,
       "Analise cuidadosamente a foto da peça de vestuário feminino e responda EXCLUSIVAMENTE com um objeto JSON válido em português do Brasil (pt-BR), sem markdown, sem comentários e sem texto extra.",
       "",
-      "Diretrizes de Moda Feminina:",
-      "- Identifique a peça de vestuário feminino (ex.: Vestidos, Conjuntos, Blusas & Croppeds, Calças, Shorts & Saias, Macaquinhos & Macacões, Tricot & Inverno, Moda Praia) respeitando estritamente as categorias disponíveis.",
-      "- Preencha o campo 'material' com o tecido aparente da peça (ex.: Alfaiataria, Linho, Viscolinho, Algodão, Crepe, Canelado, Tricot, Jeans, Poliamida), respeitando estritamente as opções disponíveis.",
+      "Diretrizes obrigatórias de Moda Feminina:",
+      `- Identifique exclusivamente peças de vestuário feminino (${NICHE_CATALOG_DEFAULTS.moda.categories.join(", ")}) escolhendo estritamente uma opção da lista de categorias fornecida.`,
+      `- Preencha o campo 'material' com o tecido aparente da peça (${NICHE_CATALOG_DEFAULTS.moda.materials.join(", ")}) escolhendo estritamente uma opção da lista de tecidos fornecida.`,
       "- Gere uma descrição elegante, feminina e persuasiva focada em caimento, ocasião de uso e conforto.",
+      "- Nunca classifique a peça como joia, bijuteria ou acessório metálico.",
       "",
       "Schema JSON obrigatório:",
       "{",
@@ -418,6 +486,30 @@ function buildSystemPrompt(categories: string[], materials: string[], niche: Sto
       '  "description": "string — 2 a 3 frases elegantes, femininas e persuasivas focadas em caimento, ocasião de uso e conforto, SEM inventar medidas em cm ou composição percentual exata",',
       '  "characteristics": [',
       '    { "label": "string (ex.: Tecido, Modelagem, Caimento, Cor, Decote, Comprimento, Ocasião)", "value": "string — apenas atributos visíveis, sem inventar tamanhos numéricos" }',
+      "  ] // de 3 a 5 itens",
+      "}",
+    ].join("\n");
+  }
+
+  if (niche === "calcados") {
+    return [
+      `Você é a especialista em curadoria de calçados e copywriting da loja brasileira '${STORE_CONFIG.name}'.`,
+      "Analise cuidadosamente a foto do calçado e responda EXCLUSIVAMENTE com um objeto JSON válido em português do Brasil (pt-BR), sem markdown, sem comentários e sem texto extra.",
+      "",
+      "Diretrizes obrigatórias de Calçados:",
+      `- Identifique exclusivamente calçados (${NICHE_CATALOG_DEFAULTS.calcados.categories.join(", ")}) escolhendo estritamente uma opção da lista de categorias fornecida.`,
+      `- Preencha o campo 'material' com o material aparente do calçado (${NICHE_CATALOG_DEFAULTS.calcados.materials.join(", ")}) escolhendo estritamente uma opção da lista de materiais fornecida.`,
+      "- Gere uma descrição elegante, envolvente e persuasiva focada em conforto, calce, estilo e ocasião de uso.",
+      "- Nunca classifique o produto como joia, bijuteria ou acessório.",
+      "",
+      "Schema JSON obrigatório:",
+      "{",
+      '  "name": "string — nome comercial elegante, curto e atrativo em português (ex.: Sandália Salto Bloco Napa Caramelo), sem SKU, preço ou nome da loja",',
+      `  "category": "string — EXATAMENTE uma opção de: ${categories.join(", ")}",`,
+      `  "material": "string — material aparente, EXATAMENTE uma opção de: ${materials.join(", ")}",`,
+      '  "description": "string — 2 a 3 frases elegantes e persuasivas focadas em conforto, estilo, calce e ocasião de uso, SEM inventar altura exata de salto em cm ou garantia",',
+      '  "characteristics": [',
+      '    { "label": "string (ex.: Material, Cor, Bico, Salto, Fechamento, Estilo, Ocasião)", "value": "string — apenas atributos visíveis, sem inventar medidas numéricas" }',
       "  ] // de 3 a 5 itens",
       "}",
     ].join("\n");
@@ -442,6 +534,7 @@ function buildSystemPrompt(categories: string[], materials: string[], niche: Sto
 
 function buildGeminiResponseSchema(categories: string[], materials: string[], niche: StoreNiche) {
   const isModa = niche === "moda";
+  const isCalcados = niche === "calcados";
   return {
     type: "OBJECT",
     properties: {
@@ -459,13 +552,17 @@ function buildGeminiResponseSchema(categories: string[], materials: string[], ni
         enum: materials,
         description: isModa
           ? "Tecido aparente exato escolhido dentre as opções disponíveis."
-          : "Material exato escolhido dentre as opções disponíveis.",
+          : isCalcados
+            ? "Material aparente do calçado escolhido dentre as opções disponíveis."
+            : "Material exato escolhido dentre as opções disponíveis.",
       },
       description: {
         type: "STRING",
         description: isModa
           ? "Descrição de 2 a 3 frases elegantes focadas em caimento, ocasião de uso e conforto, sem inventar medidas."
-          : "Descrição de 2 a 3 frases elegantes, femininas e persuasivas sem inventar medidas, peso ou garantia.",
+          : isCalcados
+            ? "Descrição de 2 a 3 frases elegantes focadas em conforto, calce e ocasião de uso, sem inventar medidas."
+            : "Descrição de 2 a 3 frases elegantes, femininas e persuasivas sem inventar medidas, peso ou garantia.",
       },
       characteristics: {
         type: "ARRAY",
@@ -607,7 +704,9 @@ async function callOpenAiCompatibleVision(params: {
   const userInstruction =
     params.niche === "moda"
       ? "Analise esta peça de vestuário feminino e retorne apenas o JSON preenchido."
-      : "Analise esta peça de acessório e retorne apenas o JSON preenchido.";
+      : params.niche === "calcados"
+        ? "Analise este calçado e retorne apenas o JSON preenchido."
+        : "Analise esta peça de acessório e retorne apenas o JSON preenchido.";
 
   let res: Response;
   try {
@@ -762,12 +861,16 @@ export async function handleAnalyzeProductRequest(request: Request): Promise<Res
   if (resolvedImage instanceof Response) return resolvedImage;
 
   const niche = resolveNiche(body.niche);
-  const availableCategories = sanitizeOptionList(body.availableCategories, [
-    ...NICHE_DEFAULT_CATEGORIES[niche],
-  ]);
-  const availableMaterials = sanitizeOptionList(body.availableMaterials, [
-    ...NICHE_DEFAULT_MATERIALS[niche],
-  ]);
+  const availableCategories = sanitizeOptionsForNiche(
+    body.availableCategories,
+    niche,
+    "categories",
+  );
+  const availableMaterials = sanitizeOptionsForNiche(
+    body.availableMaterials,
+    niche,
+    "materials",
+  );
   const referer = request.headers.get("origin") ?? request.headers.get("referer") ?? undefined;
 
   let hadDemandFailure = false;
