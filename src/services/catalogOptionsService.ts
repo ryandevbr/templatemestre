@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { getMaterialLabel, getMaterialLabelPlural } from "@/config/store.config";
 import { DEFAULT_CATEGORIES, DEFAULT_MATERIALS } from "@/data/catalog";
 import { isSupabaseConfigured, requireSupabase, supabase } from "@/lib/supabase";
 
@@ -11,8 +12,8 @@ export interface CatalogOption {
   created_at: string;
 }
 
-const STORAGE_KEY = "use-camile-catalog-options-v1";
-const OPTIONS_EVENT = "camile-catalog-options";
+const STORAGE_KEY = "store-catalog-options-v1";
+const OPTIONS_EVENT = "store-catalog-options-changed";
 
 export function normalizeOptionName(name: string): string {
   return name.trim().replace(/\s+/g, " ");
@@ -108,7 +109,9 @@ export async function listCatalogOptions(): Promise<CatalogOption[]> {
     .order("name", { ascending: true });
 
   if (error) {
-    throw new Error(`Erro ao carregar categorias e materiais: ${error.message}`);
+    throw new Error(
+      `Erro ao carregar categorias e ${getMaterialLabelPlural().toLowerCase()}: ${error.message}`,
+    );
   }
 
   return ((data ?? []) as CatalogOption[]).map((row) => ({
@@ -124,9 +127,12 @@ export async function addCatalogOption(
   rawName: string,
 ): Promise<CatalogOption> {
   const name = normalizeOptionName(rawName);
-  const label = type === "category" ? "categoria" : "material";
+  const materialWord = getMaterialLabel().toLowerCase();
+  const label = type === "category" ? "categoria" : materialWord;
   if (!name) {
-    throw new Error(`Informe o nome ${type === "category" ? "da categoria" : "do material"}.`);
+    throw new Error(
+      `Informe o nome ${type === "category" ? "da categoria" : `do ${materialWord}`}.`,
+    );
   }
 
   if (!isSupabaseConfigured || !supabase) {
@@ -138,7 +144,7 @@ export async function addCatalogOption(
       throw new Error(
         type === "category"
           ? "Esta categoria já está cadastrada."
-          : "Este material já está cadastrado.",
+          : `Este ${materialWord} já está cadastrado.`,
       );
     }
 
@@ -161,7 +167,7 @@ export async function addCatalogOption(
     throw new Error(
       type === "category"
         ? "Esta categoria já está cadastrada."
-        : "Este material já está cadastrado.",
+        : `Este ${materialWord} já está cadastrado.`,
     );
   }
 
@@ -176,7 +182,7 @@ export async function addCatalogOption(
       throw new Error(
         type === "category"
           ? "Esta categoria já está cadastrada."
-          : "Este material já está cadastrado.",
+          : `Este ${materialWord} já está cadastrado.`,
       );
     }
     throw new Error(`Erro ao salvar ${label}: ${error?.message ?? "resposta vazia"}`);

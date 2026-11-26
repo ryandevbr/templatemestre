@@ -15,7 +15,14 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { money, type Product } from "@/data/catalog";
+import {
+  QUICK_SIZES,
+  STORE_CONFIG,
+  getMaterialLabel,
+  isFashionNiche,
+  toggleQuickSize,
+} from "@/config/store.config";
+import { DEFAULT_CATEGORIES, DEFAULT_MATERIALS, money, type Product } from "@/data/catalog";
 import { normalizeImageFile } from "@/lib/normalize-image";
 import { analyzeProductWithAi } from "@/services/aiProductService";
 import { optionLookupKey } from "@/services/catalogOptionsService";
@@ -53,7 +60,7 @@ function sleep(ms: number): Promise<void> {
 function fallbackProductName(filename: string): string {
   const withoutExt = filename.replace(/\.[^.]+$/, "").trim();
   const cleaned = withoutExt.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-  return cleaned || "Acessório Use Camile";
+  return cleaned || (isFashionNiche() ? `Peça ${STORE_CONFIG.name}` : `Acessório ${STORE_CONFIG.name}`);
 }
 
 function matchCatalogOption(
@@ -76,10 +83,14 @@ export function BatchImportDialog({
   const [price, setPrice] = useState<string>("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [selectedMaterial, setSelectedMaterial] = useState<string>("");
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [autoPublish, setAutoPublish] = useState<boolean>(true);
   const [items, setItems] = useState<BatchItem[]>([]);
   const [converting, setConverting] = useState<{ current: number; total: number } | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
+
+  const isModa = isFashionNiche();
+  const materialLabel = getMaterialLabel();
 
   const itemsRef = useRef<BatchItem[]>([]);
   const objectUrlsRef = useRef<Set<string>>(new Set());
@@ -127,6 +138,7 @@ export function BatchImportDialog({
     setPrice("");
     setSelectedCategory("");
     setSelectedMaterial("");
+    setSelectedSizes([]);
     setAutoPublish(true);
     setConverting(null);
     setIsRunning(false);
@@ -226,12 +238,14 @@ export function BatchImportDialog({
     cancelRequestedRef.current = false;
     setIsRunning(true);
 
-    const defaultCategory = categoryNames.includes("Brincos")
-      ? "Brincos"
-      : (categoryNames[0] ?? "Brincos");
-    const defaultMaterial = materialNames.includes("Semijoia")
-      ? "Semijoia"
-      : (materialNames[0] ?? "Semijoia");
+    const defaultCategory =
+      !isModa && categoryNames.includes("Brincos")
+        ? "Brincos"
+        : (categoryNames[0] ?? DEFAULT_CATEGORIES[0] ?? "");
+    const defaultMaterial =
+      !isModa && materialNames.includes("Semijoia")
+        ? "Semijoia"
+        : (materialNames[0] ?? DEFAULT_MATERIALS[0] ?? "");
 
     // Reset target items back to queued before processing
     const targetSet = new Set(targetIds);
@@ -276,6 +290,7 @@ export function BatchImportDialog({
           file: currentItem.file,
           availableCategories: categoryNames,
           availableMaterials: materialNames,
+          niche: STORE_CONFIG.niche,
         });
 
         if (!mountedRef.current) break;
@@ -321,6 +336,7 @@ export function BatchImportDialog({
           featured: false,
           in_stock: true,
           characteristics,
+          sizes: [...selectedSizes],
         };
 
         await saveProduct(productToCreate);
@@ -513,7 +529,7 @@ export function BatchImportDialog({
                 </label>
 
                 <label>
-                  Material
+                  {materialLabel}
                   <select
                     value={selectedMaterial}
                     onChange={(e) => setSelectedMaterial(e.target.value)}
@@ -526,6 +542,45 @@ export function BatchImportDialog({
                     ))}
                   </select>
                 </label>
+              </div>
+
+              <div className="space-y-2.5 rounded-lg border bg-muted/25 p-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-foreground">Tamanhos do lote (opcional)</p>
+                  {selectedSizes.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                      onClick={() => setSelectedSizes([])}
+                    >
+                      Limpar ({selectedSizes.length})
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Tamanhos do lote">
+                  {QUICK_SIZES.map((size) => {
+                    const selected = selectedSizes.includes(size);
+                    return (
+                      <button
+                        key={size}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => setSelectedSizes((prev) => toggleQuickSize(prev, size))}
+                        className={`min-h-8 min-w-10 rounded-md border px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                          selected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background text-foreground hover:border-primary/60 hover:text-primary"
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  A mesma grade selecionada será aplicada a todas as peças desta fila. Deixe vazio
+                  para itens sem tamanho.
+                </p>
               </div>
 
               <label className="flex items-center gap-2.5 rounded-lg border bg-muted/35 px-3.5 py-3 text-xs text-foreground cursor-pointer">
@@ -669,8 +724,8 @@ export function BatchImportDialog({
                       </p>
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                         {item.resolvedCategory && item.resolvedMaterial
-                          ? `${item.resolvedCategory} · ${item.resolvedMaterial} · ${money(parsedPrice)}`
-                          : `${money(parsedPrice)} · ${selectedCategory || "Categoria via IA"} · ${selectedMaterial || "Material via IA"}`}
+                          ? `${item.resolvedCategory} · ${item.resolvedMaterial} · ${money(parsedPrice)}${selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`
+                          : `${money(parsedPrice)} · ${selectedCategory || "Categoria via IA"} · ${selectedMaterial || `${materialLabel} via IA`}${selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`}
                       </p>
                       {item.status === "done" && !autoPublish && (
                         <p className="text-[10px] text-muted-foreground mt-0.5">

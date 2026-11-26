@@ -41,6 +41,17 @@ import {
   uploadStoreImage,
 } from "@/services/storageService";
 import {
+  QUICK_SIZES,
+  STORE_CONFIG,
+  getDefaultBannerAlt,
+  getMaterialLabel,
+  getMaterialLabelPlural,
+  isFashionNiche,
+  toggleQuickSize,
+} from "@/config/store.config";
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_MATERIALS,
   money,
   priceOf,
   type AdminProfile,
@@ -121,6 +132,13 @@ export function AdminPanel() {
   const pendingUploadsRef = useRef<string[]>([]);
   const lastProductFileRef = useRef<File | null>(null);
   const productModalSessionRef = useRef(0);
+
+  const isModa = isFashionNiche();
+  const materialLabel = getMaterialLabel();
+  const materialLabelLower = materialLabel.toLowerCase();
+  const materialLabelPlural = getMaterialLabelPlural();
+  const materialLabelPluralLower = materialLabelPlural.toLowerCase();
+  const defaultBannerAlt = getDefaultBannerAlt();
 
   const cleanupPendingUploads = (keepUrl?: string) => {
     const toDelete = pendingUploadsRef.current.filter((url) => url && url !== keepUrl);
@@ -224,6 +242,7 @@ export function AdminPanel() {
         imageUrl: urlToUse,
         availableCategories,
         availableMaterials,
+        niche: STORE_CONFIG.niche,
       });
 
       if (sessionId !== productModalSessionRef.current) return;
@@ -289,7 +308,7 @@ export function AdminPanel() {
         };
       });
 
-      toast.success("Campos preenchidos com IA! Revise o material e informe o preço.");
+      toast.success(`Campos preenchidos com IA! Revise o ${materialLabelLower} e informe o preço.`);
     } catch (err) {
       if (sessionId !== productModalSessionRef.current) return;
       toast.error(err instanceof Error ? err.message : "Erro ao analisar a peça com IA.");
@@ -356,7 +375,7 @@ export function AdminPanel() {
       );
       setInlineOptionType(null);
       setInlineOptionValue("");
-      toast.success(type === "category" ? "Categoria adicionada!" : "Material adicionado!");
+      toast.success(type === "category" ? "Categoria adicionada!" : `${materialLabel} adicionado!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível salvar a opção.");
     } finally {
@@ -371,7 +390,7 @@ export function AdminPanel() {
       await addOption(type, rawValue);
       if (type === "category") setManageCategoryInput("");
       else setManageMaterialInput("");
-      toast.success(type === "category" ? "Categoria adicionada!" : "Material adicionado!");
+      toast.success(type === "category" ? "Categoria adicionada!" : `${materialLabel} adicionado!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível salvar a opção.");
     } finally {
@@ -384,7 +403,9 @@ export function AdminPanel() {
     try {
       await removeOption(id);
       toast.success(
-        type === "category" ? "Categoria removida da lista." : "Material removido da lista.",
+        type === "category"
+          ? "Categoria removida da lista."
+          : `${materialLabel} removido da lista.`,
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao remover opção.");
@@ -401,12 +422,14 @@ export function AdminPanel() {
     setSizeInfo("");
     setInlineOptionType(null);
     setInlineOptionValue("");
-    const defaultCategory = categoryNames.includes("Brincos")
-      ? "Brincos"
-      : (categoryNames[0] ?? "Brincos");
-    const defaultMaterial = materialNames.includes("Semijoia")
-      ? "Semijoia"
-      : (materialNames[0] ?? "Semijoia");
+    const defaultCategory =
+      !isModa && categoryNames.includes("Brincos")
+        ? "Brincos"
+        : (categoryNames[0] ?? DEFAULT_CATEGORIES[0] ?? "");
+    const defaultMaterial =
+      !isModa && materialNames.includes("Semijoia")
+        ? "Semijoia"
+        : (materialNames[0] ?? DEFAULT_MATERIALS[0] ?? "");
     setEdit({
       id: crypto.randomUUID(),
       name: "",
@@ -423,6 +446,7 @@ export function AdminPanel() {
       featured: false,
       in_stock: true,
       characteristics: [],
+      sizes: [],
     });
   };
 
@@ -472,7 +496,7 @@ export function AdminPanel() {
         <div className="shell h-17 md:h-20 flex items-center justify-between gap-3">
           <img
             src="/logo.png"
-            alt="Use Camile Acessórios"
+            alt={STORE_CONFIG.name}
             className="h-11 sm:h-12 md:h-14 w-auto shrink-0 object-contain"
           />
           <div className="flex gap-2 shrink-0">
@@ -597,11 +621,11 @@ export function AdminPanel() {
                 ))}
               </select>
               <select
-                aria-label="Material"
+                aria-label={materialLabel}
                 value={material}
                 onChange={(e) => setMaterial(e.target.value)}
               >
-                <option value="">Todos os materiais</option>
+                <option value="">Todos os {materialLabelPluralLower}</option>
                 {filterMaterials.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -632,7 +656,7 @@ export function AdminPanel() {
                 onClick={() => setManageOptionsOpen(true)}
               >
                 <SlidersHorizontal size={13} />
-                Gerenciar categorias e materiais
+                Gerenciar categorias e {materialLabelPluralLower}
               </Button>
             </div>
             <div className="mt-6">
@@ -646,7 +670,9 @@ export function AdminPanel() {
                   <div>
                     <p className="text-sm font-medium">{p.name}</p>
                     <p className="text-[11px] text-muted-foreground mt-1">
-                      {p.sku} · {p.category} · {p.material}
+                      {p.sku ? `${p.sku} · ` : ""}
+                      {p.category} · {p.material}
+                      {p.sizes.length > 0 ? ` · Tam: ${p.sizes.join(", ")}` : ""}
                     </p>
                     <div className="flex gap-3 mt-3 flex-wrap">
                       {(["active", "featured", "in_stock"] as const).map((key, i) => (
@@ -697,7 +723,10 @@ export function AdminPanel() {
                         lastProductFileRef.current = null;
                         setAnalyzingAi(false);
                         setAutoFillOnUpload(false);
-                        setEdit(structuredClone(p));
+                        setEdit({
+                          ...structuredClone(p),
+                          sizes: Array.isArray(p.sizes) ? [...p.sizes] : [],
+                        });
                         setSizeInfo("");
                         setInlineOptionType(null);
                         setInlineOptionValue("");
@@ -816,7 +845,7 @@ export function AdminPanel() {
                 <span
                   className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium border ${
                     promoDraft.promo_active
-                      ? "bg-[#C91E7C]/10 text-[#C91E7C] border-[#C91E7C]/25"
+                      ? "bg-primary/10 text-primary border-primary/25"
                       : "bg-muted text-muted-foreground border-border"
                   }`}
                 >
@@ -944,7 +973,7 @@ export function AdminPanel() {
                     id: crypto.randomUUID(),
                     image_url: "",
                     mobile_image_url: null,
-                    alt: "Banner Use Camile Acessórios",
+                    alt: defaultBannerAlt,
                     active: true,
                     filter: "",
                     display_order: data.banners.length,
@@ -962,7 +991,7 @@ export function AdminPanel() {
               >
                 <img
                   src={b.image_url}
-                  alt={b.alt || "Banner Use Camile Acessórios"}
+                  alt={b.alt || defaultBannerAlt}
                   className="w-full h-20 object-cover"
                 />
                 <div>
@@ -1311,7 +1340,7 @@ export function AdminPanel() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <label htmlFor="product-material" className="text-xs text-muted-foreground">
-                      Material
+                      {materialLabel}
                     </label>
                     <button
                       type="button"
@@ -1339,9 +1368,11 @@ export function AdminPanel() {
                     <div className="rounded-md border bg-muted/60 p-2.5 space-y-2">
                       <input
                         type="text"
-                        aria-label="Novo material"
+                        aria-label={`Novo ${materialLabelLower}`}
                         className="text-base h-10"
-                        placeholder="Ex.: Aço Inox, Ródio Branco"
+                        placeholder={
+                          isModa ? "Ex.: Alfaiataria, Linho, Crepe" : "Ex.: Aço Inox, Ródio Branco"
+                        }
                         value={inlineOptionValue}
                         onChange={(e) => setInlineOptionValue(e.target.value)}
                         onKeyDown={(e) => {
@@ -1391,6 +1422,55 @@ export function AdminPanel() {
                   <SlidersHorizontal size={12} />
                   Gerenciar opções
                 </button>
+              </div>
+              <div className="space-y-2.5 rounded-lg border bg-muted/25 p-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-foreground">
+                    Tamanhos disponíveis (opcional)
+                  </p>
+                  {edit.sizes.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                      onClick={() => setEdit({ ...edit, sizes: [] })}
+                    >
+                      Limpar ({edit.sizes.length})
+                    </button>
+                  )}
+                </div>
+                <div
+                  className="flex flex-wrap gap-2"
+                  role="group"
+                  aria-label="Tamanhos disponíveis"
+                >
+                  {QUICK_SIZES.map((size) => {
+                    const selected = edit.sizes.includes(size);
+                    return (
+                      <button
+                        key={size}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() =>
+                          setEdit({
+                            ...edit,
+                            sizes: toggleQuickSize(edit.sizes, size),
+                          })
+                        }
+                        className={`min-h-8 min-w-10 rounded-md border px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                          selected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background text-foreground hover:border-primary/60 hover:text-primary"
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Selecione os tamanhos disponíveis para esta peça ou deixe vazio caso seja um item
+                  sem tamanho (ex.: acessórios).
+                </p>
               </div>
               <div className="flex gap-4 flex-wrap">
                 {(["active", "featured", "in_stock"] as const).map((key, i) => (
@@ -1735,7 +1815,7 @@ export function AdminPanel() {
                     await saveBanner({
                       ...banner,
                       mobile_image_url: null,
-                      alt: banner.alt.trim() || "Banner Use Camile Acessórios",
+                      alt: banner.alt.trim() || defaultBannerAlt,
                     });
                     cleanupPendingUploads(banner.image_url);
                     setBanner(null);
@@ -1788,7 +1868,9 @@ export function AdminPanel() {
       </Dialog>
       <Dialog open={manageOptionsOpen} onOpenChange={setManageOptionsOpen}>
         <DialogContent className="max-h-[88dvh] overflow-hidden flex flex-col w-[calc(100%-24px)] max-w-lg">
-          <DialogTitle className="font-display text-3xl">Categorias e materiais</DialogTitle>
+          <DialogTitle className="font-display text-3xl">
+            Categorias e {materialLabelPluralLower}
+          </DialogTitle>
           <DialogDescription>
             Adicione ou remova opções da lista de seleção. Produtos já cadastrados mantêm o texto
             salvo mesmo se uma opção for excluída.
@@ -1850,13 +1932,13 @@ export function AdminPanel() {
               </div>
             </section>
             <section className="space-y-3">
-              <h3 className="text-xl">Materiais</h3>
+              <h3 className="text-xl">{materialLabelPlural}</h3>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  aria-label="Adicionar material"
+                  aria-label={`Adicionar ${materialLabelLower}`}
                   className="text-base h-10"
-                  placeholder="Novo material..."
+                  placeholder={`Novo ${materialLabelLower}...`}
                   value={manageMaterialInput}
                   onChange={(e) => setManageMaterialInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -1890,7 +1972,7 @@ export function AdminPanel() {
                       size="icon"
                       className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
                       disabled={removingOptionId === item.id}
-                      aria-label={`Excluir material ${item.name}`}
+                      aria-label={`Excluir ${materialLabelLower} ${item.name}`}
                       onClick={() => void handleRemoveManagedOption(item.id, "material")}
                     >
                       <Trash2 size={14} />
@@ -1899,7 +1981,7 @@ export function AdminPanel() {
                 ))}
                 {materialOptions.length === 0 && (
                   <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-                    Nenhum material cadastrado.
+                    Nenhum {materialLabelLower} cadastrado.
                   </p>
                 )}
               </div>

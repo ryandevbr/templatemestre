@@ -209,4 +209,60 @@ describe("POST /api/analyze-product multi-provider cascade", () => {
     expect(parsed?.category).toBe("Colares");
     expect(parsed?.material).toBe("Semijoia");
   });
+
+  it("adapts prompt and default options for niche 'moda'", async () => {
+    process.env["GROQ_API_KEY"] = "groq-test";
+
+    let capturedBody = "";
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      capturedBody = typeof init?.body === "string" ? init.body : "";
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  name: "Vestido Midi Linho Natural",
+                  category: "Vestidos",
+                  material: "Linho",
+                  description:
+                    "Vestido midi com caimento fluido e toque fresco, perfeito para almoços ao ar livre e eventos diurnos com máximo conforto.",
+                  characteristics: [
+                    { label: "Tecido", value: "Linho natural" },
+                    { label: "Caimento", value: "Fluido e acinturado" },
+                    { label: "Ocasião", value: "Eventos diurnos e casuais" },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    globalThis.fetch = fetchMock;
+
+    const req = new Request("http://localhost/api/analyze-product", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: SAMPLE_BASE64,
+        mimeType: "image/webp",
+        niche: "moda",
+      }),
+    });
+
+    const res = await handleAnalyzeProductRequest(req);
+    expect(res.status).toBe(200);
+    expect(capturedBody).toContain("Moda Feminina");
+    expect(capturedBody).toContain("Vestidos");
+    expect(capturedBody).toContain("Alfaiataria");
+    expect(capturedBody).toContain("caimento, ocasião de uso e conforto");
+
+    const json = (await res.json()) as {
+      data: { name: string; category: string; material: string };
+    };
+    expect(json.data.category).toBe("Vestidos");
+    expect(json.data.material).toBe("Linho");
+  });
 });

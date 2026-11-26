@@ -1,4 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  NICHE_DEFAULT_CATEGORIES,
+  NICHE_DEFAULT_MATERIALS,
+  STORE_CONFIG,
+  type StoreNiche,
+} from "@/config/store.config";
 
 export type AiProviderName = "groq" | "gemini" | "openrouter";
 
@@ -8,6 +14,7 @@ export interface AnalyzeProductRequestBody {
   imageUrl?: string;
   availableCategories?: string[];
   availableMaterials?: string[];
+  niche?: StoreNiche;
 }
 
 export interface AnalyzedProductCharacteristic {
@@ -387,9 +394,37 @@ function matchAllowedOptionWithFallback(value: unknown, allowed: string[]): stri
   return exact ?? fallback;
 }
 
-function buildSystemPrompt(categories: string[], materials: string[]): string {
+function resolveNiche(raw: unknown): StoreNiche {
+  if (raw === "moda" || raw === "acessorios") return raw;
+  return STORE_CONFIG.niche;
+}
+
+function buildSystemPrompt(categories: string[], materials: string[], niche: StoreNiche): string {
+  if (niche === "moda") {
+    return [
+      `Você é a especialista em curadoria de moda feminina e copywriting da loja brasileira '${STORE_CONFIG.name}'.`,
+      "Analise cuidadosamente a foto da peça de vestuário feminino e responda EXCLUSIVAMENTE com um objeto JSON válido em português do Brasil (pt-BR), sem markdown, sem comentários e sem texto extra.",
+      "",
+      "Diretrizes de Moda Feminina:",
+      "- Identifique a peça de vestuário feminino (ex.: Vestidos, Conjuntos, Blusas & Croppeds, Calças, Shorts & Saias, Macaquinhos & Macacões, Tricot & Inverno, Moda Praia) respeitando estritamente as categorias disponíveis.",
+      "- Preencha o campo 'material' com o tecido aparente da peça (ex.: Alfaiataria, Linho, Viscolinho, Algodão, Crepe, Canelado, Tricot, Jeans, Poliamida), respeitando estritamente as opções disponíveis.",
+      "- Gere uma descrição elegante, feminina e persuasiva focada em caimento, ocasião de uso e conforto.",
+      "",
+      "Schema JSON obrigatório:",
+      "{",
+      '  "name": "string — nome comercial elegante, curto e atrativo em português (ex.: Vestido Midi Linho com Fenda Lateral), sem SKU, preço ou nome da loja",',
+      `  "category": "string — EXATAMENTE uma opção de: ${categories.join(", ")}",`,
+      `  "material": "string — tecido aparente, EXATAMENTE uma opção de: ${materials.join(", ")}",`,
+      '  "description": "string — 2 a 3 frases elegantes, femininas e persuasivas focadas em caimento, ocasião de uso e conforto, SEM inventar medidas em cm ou composição percentual exata",',
+      '  "characteristics": [',
+      '    { "label": "string (ex.: Tecido, Modelagem, Caimento, Cor, Decote, Comprimento, Ocasião)", "value": "string — apenas atributos visíveis, sem inventar tamanhos numéricos" }',
+      "  ] // de 3 a 5 itens",
+      "}",
+    ].join("\n");
+  }
+
   return [
-    "Você é a especialista em curadoria e copywriting da loja brasileira de joias e acessórios femininos 'Use Camile Acessórios'.",
+    `Você é a especialista em curadoria e copywriting da loja brasileira de joias e acessórios femininos '${STORE_CONFIG.name}'.`,
     "Analise cuidadosamente a foto do acessório e responda EXCLUSIVAMENTE com um objeto JSON válido em português do Brasil (pt-BR), sem markdown, sem comentários e sem texto extra.",
     "",
     "Schema JSON obrigatório:",
@@ -405,7 +440,8 @@ function buildSystemPrompt(categories: string[], materials: string[]): string {
   ].join("\n");
 }
 
-function buildGeminiResponseSchema(categories: string[], materials: string[]) {
+function buildGeminiResponseSchema(categories: string[], materials: string[], niche: StoreNiche) {
+  const isModa = niche === "moda";
   return {
     type: "OBJECT",
     properties: {
@@ -421,12 +457,15 @@ function buildGeminiResponseSchema(categories: string[], materials: string[]) {
       material: {
         type: "STRING",
         enum: materials,
-        description: "Material exato escolhido dentre as opções disponíveis.",
+        description: isModa
+          ? "Tecido aparente exato escolhido dentre as opções disponíveis."
+          : "Material exato escolhido dentre as opções disponíveis.",
       },
       description: {
         type: "STRING",
-        description:
-          "Descrição de 2 a 3 frases elegantes, femininas e persuasivas sem inventar medidas, peso ou garantia.",
+        description: isModa
+          ? "Descrição de 2 a 3 frases elegantes focadas em caimento, ocasião de uso e conforto, sem inventar medidas."
+          : "Descrição de 2 a 3 frases elegantes, femininas e persuasivas sem inventar medidas, peso ou garantia.",
       },
       characteristics: {
         type: "ARRAY",
@@ -552,6 +591,7 @@ async function callOpenAiCompatibleVision(params: {
   image: { base64: string; mimeType: string };
   categories: string[];
   materials: string[];
+  niche: StoreNiche;
   signal: AbortSignal;
   referer?: string;
 }): Promise<{ ok: true; text: string } | { ok: false; failure: AttemptFailure }> {
@@ -561,8 +601,13 @@ async function callOpenAiCompatibleVision(params: {
   };
   if (params.attempt.provider === "openrouter") {
     if (params.referer) headers["http-referer"] = params.referer;
-    headers["x-title"] = "Use Camile Acessorios";
+    headers["x-title"] = STORE_CONFIG.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   }
+
+  const userInstruction =
+    params.niche === "moda"
+      ? "Analise esta peça de vestuário feminino e retorne apenas o JSON preenchido."
+      : "Analise esta peça de acessório e retorne apenas o JSON preenchido.";
 
   let res: Response;
   try {
@@ -575,13 +620,16 @@ async function callOpenAiCompatibleVision(params: {
         temperature: 0.4,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: buildSystemPrompt(params.categories, params.materials) },
+          {
+            role: "system",
+            content: buildSystemPrompt(params.categories, params.materials, params.niche),
+          },
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: "Analise esta peça de acessório e retorne apenas o JSON preenchido.",
+                text: userInstruction,
               },
               {
                 type: "image_url",
@@ -630,6 +678,7 @@ async function callGeminiVision(params: {
   image: { base64: string; mimeType: string };
   categories: string[];
   materials: string[];
+  niche: StoreNiche;
   signal: AbortSignal;
 }): Promise<{ ok: true; text: string } | { ok: false; failure: AttemptFailure }> {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(params.attempt.model)}:generateContent?key=${encodeURIComponent(params.attempt.apiKey)}`;
@@ -645,7 +694,7 @@ async function callGeminiVision(params: {
           {
             role: "user",
             parts: [
-              { text: buildSystemPrompt(params.categories, params.materials) },
+              { text: buildSystemPrompt(params.categories, params.materials, params.niche) },
               {
                 inline_data: {
                   mime_type: params.image.mimeType,
@@ -658,7 +707,11 @@ async function callGeminiVision(params: {
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.4,
-          responseSchema: buildGeminiResponseSchema(params.categories, params.materials),
+          responseSchema: buildGeminiResponseSchema(
+            params.categories,
+            params.materials,
+            params.niche,
+          ),
         },
       }),
     });
@@ -708,15 +761,13 @@ export async function handleAnalyzeProductRequest(request: Request): Promise<Res
   const resolvedImage = await resolveImageData(body);
   if (resolvedImage instanceof Response) return resolvedImage;
 
+  const niche = resolveNiche(body.niche);
   const availableCategories = sanitizeOptionList(body.availableCategories, [
-    "Anéis",
-    "Colares",
-    "Brincos",
-    "Pulseiras",
-    "Tornozeleiras",
-    "Conjuntos",
+    ...NICHE_DEFAULT_CATEGORIES[niche],
   ]);
-  const availableMaterials = sanitizeOptionList(body.availableMaterials, ["Prata 925", "Semijoia"]);
+  const availableMaterials = sanitizeOptionList(body.availableMaterials, [
+    ...NICHE_DEFAULT_MATERIALS[niche],
+  ]);
   const referer = request.headers.get("origin") ?? request.headers.get("referer") ?? undefined;
 
   let hadDemandFailure = false;
@@ -748,6 +799,7 @@ export async function handleAnalyzeProductRequest(request: Request): Promise<Res
               image: resolvedImage,
               categories: availableCategories,
               materials: availableMaterials,
+              niche,
               signal: controller.signal,
             })
           : attempt.provider === "openrouter"
@@ -757,6 +809,7 @@ export async function handleAnalyzeProductRequest(request: Request): Promise<Res
                 image: resolvedImage,
                 categories: availableCategories,
                 materials: availableMaterials,
+                niche,
                 signal: controller.signal,
                 ...(referer ? { referer } : {}),
               })
@@ -765,6 +818,7 @@ export async function handleAnalyzeProductRequest(request: Request): Promise<Res
                 image: resolvedImage,
                 categories: availableCategories,
                 materials: availableMaterials,
+                niche,
                 signal: controller.signal,
               });
 

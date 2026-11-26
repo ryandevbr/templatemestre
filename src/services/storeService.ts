@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { getDefaultBannerAlt } from "@/config/store.config";
 import {
   defaultPromotion,
   emptyStoreData,
@@ -7,38 +8,29 @@ import {
   type Banner,
   type Coupon,
   type Product,
-  type ProductCharacteristic,
   type StoreAnnouncement,
   type StoreData,
   type StorePromotion,
 } from "@/data/catalog";
-import { isSupabaseConfigured, requireSupabase, supabase } from "@/lib/supabase";
+import {
+  PRODUCT_SELECT_COLUMNS,
+  PRODUCT_SELECT_COLUMNS_LEGACY,
+  isSupabaseConfigured,
+  mapProductRow,
+  parseProductSizes,
+  requireSupabase,
+  supabase,
+  toProductPayload,
+  type ProductRow,
+} from "@/lib/supabase";
 import { normalizeCode } from "@/services/couponService";
 import { deleteStoreImage } from "@/services/storageService";
 
-const KEY = "use-camile-store-v1";
-const STORE_EVENT = "camile-store";
-const DEFAULT_BANNER_ALT = "Banner Use Camile Acessórios";
+const KEY = "store-template-v1";
+const STORE_EVENT = "store-template-changed";
+const DEFAULT_BANNER_ALT = getDefaultBannerAlt();
 
 export type StoreScope = "public" | "admin";
-
-interface ProductRow {
-  id: string;
-  name: string;
-  sku: string | null;
-  category: string;
-  material: string;
-  price: number | string;
-  sale_price: number | string | null;
-  is_on_sale: boolean;
-  sale_label: string | null;
-  image_url: string | null;
-  description: string | null;
-  active: boolean;
-  featured: boolean;
-  in_stock: boolean;
-  characteristics: unknown;
-}
 
 interface HeroBannerRow {
   id: string;
@@ -98,39 +90,6 @@ interface AdminProfileRow {
   avatar_url: string | null;
 }
 
-function parseCharacteristics(raw: unknown): ProductCharacteristic[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(
-      (item): item is { attribute?: unknown; value?: unknown } =>
-        item != null && typeof item === "object",
-    )
-    .map((item) => ({
-      attribute: typeof item.attribute === "string" ? item.attribute : "",
-      value: typeof item.value === "string" ? item.value : "",
-    }));
-}
-
-function mapProductRow(row: ProductRow): Product {
-  return {
-    id: row.id,
-    name: row.name,
-    sku: row.sku ?? "",
-    category: row.category,
-    material: row.material,
-    price: Number(row.price),
-    sale_price: Number(row.sale_price ?? 0),
-    is_on_sale: Boolean(row.is_on_sale),
-    sale_label: row.sale_label ?? "",
-    image_url: row.image_url ?? "",
-    description: row.description ?? "",
-    active: Boolean(row.active),
-    featured: Boolean(row.featured),
-    in_stock: Boolean(row.in_stock),
-    characteristics: parseCharacteristics(row.characteristics),
-  };
-}
-
 function mapBannerRow(row: HeroBannerRow, fallbackIndex: number): Banner {
   return {
     id: row.id,
@@ -153,30 +112,6 @@ function mapCouponRow(row: CouponRow): Coupon {
     expires_at: row.expires_at ?? "",
     active: Boolean(row.active),
     allow_on_sale: Boolean(row.allow_on_sale),
-  };
-}
-
-function toProductPayload(product: Product) {
-  return {
-    id: product.id || crypto.randomUUID(),
-    name: product.name.trim(),
-    sku: product.sku.trim(),
-    category: product.category,
-    material: product.material,
-    price: Number(product.price),
-    sale_price: product.is_on_sale
-      ? Number(product.sale_price)
-      : Math.max(0, Number(product.sale_price || 0)),
-    is_on_sale: Boolean(product.is_on_sale),
-    sale_label: product.sale_label.trim(),
-    image_url: product.image_url.trim(),
-    description: product.description.trim(),
-    active: Boolean(product.active),
-    featured: Boolean(product.featured),
-    in_stock: Boolean(product.in_stock),
-    characteristics: product.characteristics
-      .map((item) => ({ attribute: item.attribute.trim(), value: item.value.trim() }))
-      .filter((item) => item.attribute !== "" || item.value !== ""),
   };
 }
 
@@ -217,9 +152,16 @@ export function loadStore(): StoreData {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(initialData);
     const parsed = JSON.parse(raw) as Partial<StoreData>;
+    const normalizedProducts = Array.isArray(parsed.products)
+      ? parsed.products.map((item) => ({
+          ...item,
+          sizes: parseProductSizes((item as { sizes?: unknown }).sizes),
+        }))
+      : structuredClone(initialData.products);
     return {
       ...structuredClone(initialData),
       ...parsed,
+      products: normalizedProducts,
       announcement: {
         ...initialData.announcement,
         ...(parsed.announcement ?? {}),
@@ -251,9 +193,7 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
 
   let productsQuery = supabase
     .from("products")
-    .select(
-      "id, name, sku, category, material, price, sale_price, is_on_sale, sale_label, image_url, description, active, featured, in_stock, characteristics",
-    )
+    .select(PRODUCT_SELECT_COLUMNS)
     .order("featured", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -287,8 +227,25 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
     settingsQuery,
   ]);
 
+  let productRows = (productsRes.data ?? []) as ProductRow[];
   if (productsRes.error) {
-    throw new Error(`Erro ao carregar produtos: ${productsRes.error.message}`);
+    if (productsRes.error.code === "42703" || productsRes.error.message.includes("sizes")) {
+      let fallbackProductsQuery = supabase
+        .from("products")
+        .select(PRODUCT_SELECT_COLUMNS_LEGACY)
+        .order("featured", { ascending: false })
+        .order("created_at", { ascending: false });
+      if (scope === "public") {
+        fallbackProductsQuery = fallbackProductsQuery.eq("active", true);
+      }
+      const fallbackRes = await fallbackProductsQuery;
+      if (fallbackRes.error) {
+        throw new Error(`Erro ao carregar produtos: ${fallbackRes.error.message}`);
+      }
+      productRows = (fallbackRes.data ?? []) as ProductRow[];
+    } else {
+      throw new Error(`Erro ao carregar produtos: ${productsRes.error.message}`);
+    }
   }
   let bannersRows = (bannersRes.data ?? []) as HeroBannerRow[];
   if (bannersRes.error) {
@@ -367,7 +324,7 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
   }
 
   return {
-    products: ((productsRes.data ?? []) as ProductRow[]).map(mapProductRow),
+    products: productRows.map(mapProductRow),
     banners: bannersRows.map(mapBannerRow),
     coupons: ((couponsRes.data ?? []) as CouponRow[]).map(mapCouponRow),
     announcement,
@@ -401,9 +358,7 @@ export async function upsertProduct(product: Product, previousImageUrl?: string)
   const { data, error } = await client
     .from("products")
     .upsert(payload, { onConflict: "id" })
-    .select(
-      "id, name, sku, category, material, price, sale_price, is_on_sale, sale_label, image_url, description, active, featured, in_stock, characteristics",
-    )
+    .select(PRODUCT_SELECT_COLUMNS)
     .single();
 
   if (error || !data) {

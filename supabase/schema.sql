@@ -1,5 +1,5 @@
 -- ============================================================================
--- Use Camile Acessórios — Schema completo para Supabase (PostgreSQL + Storage)
+-- Template Mestre White-Label — Schema completo para Supabase (PostgreSQL + Storage)
 -- Execute este arquivo no SQL Editor do projeto Supabase.
 -- ============================================================================
 
@@ -40,6 +40,8 @@ create table if not exists public.products (
   in_stock boolean not null default true,
   characteristics jsonb not null default '[]'::jsonb
     check (jsonb_typeof(characteristics) = 'array'),
+  sizes jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(sizes) = 'array'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint products_sale_price_valid
@@ -51,7 +53,7 @@ create table if not exists public.hero_banners (
   id uuid primary key default gen_random_uuid(),
   image_url text not null check (btrim(image_url) <> ''),
   mobile_image_url text,
-  alt text not null default 'Banner Use Camile Acessórios' check (btrim(alt) <> ''),
+  alt text not null default 'Banner da Loja' check (btrim(alt) <> ''),
   active boolean not null default true,
   filter text not null default '',
   display_order integer not null default 0,
