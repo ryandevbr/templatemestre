@@ -164,3 +164,20 @@ export async function deleteStoreImage(imageUrl: string): Promise<void> {
     console.warn("Não foi possível remover a imagem antiga do Storage:", error.message);
   }
 }
+
+export async function deleteStoreImages(imageUrls: string[]): Promise<void> {
+  if (!isSupabaseConfigured || !supabase || imageUrls.length === 0) return;
+  const uniquePaths = Array.from(
+    new Set(
+      imageUrls
+        .map((url) => extractStoragePath(url))
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+  if (uniquePaths.length === 0) return;
+
+  const { error } = await supabase.storage.from(STORE_MEDIA_BUCKET).remove(uniquePaths);
+  if (error) {
+    console.warn("Não foi possível remover imagens antigas do Storage:", error.message);
+  }
+}

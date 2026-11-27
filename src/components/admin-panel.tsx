@@ -16,7 +16,10 @@ import {
   Sparkles,
   Loader2,
   Gift,
+  Eye,
   EyeOff,
+  Check,
+  Ban,
   X,
   Save,
 } from "lucide-react";
@@ -82,6 +85,8 @@ export function AdminPanel() {
     toggleProductField,
     duplicateProduct,
     deleteProduct,
+    bulkUpdateProducts,
+    bulkDeleteProducts,
     saveBanner,
     reorderBanners,
     deleteBanner,
@@ -130,6 +135,9 @@ export function AdminPanel() {
   const [manageMaterialInput, setManageMaterialInput] = useState("");
   const [removingOptionId, setRemovingOptionId] = useState<string | null>(null);
   const [applyingDefaults, setApplyingDefaults] = useState(false);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   const [announcementDraft, setAnnouncementDraft] = useState<StoreAnnouncement>(data.announcement);
   const [promoDraft, setPromoDraft] = useState<StorePromotion>(data.promotion);
   const [profileDraft, setProfileDraft] = useState<AdminProfile>(data.profile);
@@ -171,6 +179,24 @@ export function AdminPanel() {
   useEffect(() => {
     setProfileDraft(data.profile);
   }, [data.profile]);
+
+  // Limpa seleções ao sair da aba Produtos
+  useEffect(() => {
+    if (tab !== "Produtos") {
+      setSelectedProductIds([]);
+      setBulkDeleteConfirmOpen(false);
+    }
+  }, [tab]);
+
+  // Remove automaticamente IDs inexistentes da seleção (evita seleções fantasmas)
+  useEffect(() => {
+    const existingIds = new Set(data.products.map((p) => p.id));
+    setSelectedProductIds((prev) => {
+      if (prev.length === 0) return prev;
+      const valid = prev.filter((id) => existingIds.has(id));
+      return valid.length === prev.length ? prev : valid;
+    });
+  }, [data.products]);
 
   useEffect(() => {
     let active = true;
@@ -229,6 +255,53 @@ export function AdminPanel() {
       await toggleProductField(p, key);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao atualizar produto.");
+    }
+  };
+
+  const toggleSelectProduct = (id: string) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
+  const handleBulkUpdate = async (
+    patch: { in_stock?: boolean; active?: boolean },
+    singularLabel: string,
+    pluralLabel: string,
+  ) => {
+    if (selectedProductIds.length === 0 || isBulkProcessing) return;
+    const count = selectedProductIds.length;
+    setIsBulkProcessing(true);
+    try {
+      await bulkUpdateProducts(selectedProductIds, patch);
+      setSelectedProductIds([]);
+      toast.success(
+        count === 1
+          ? `1 produto marcado como ${singularLabel}.`
+          : `${count} produtos marcados como ${pluralLabel}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao atualizar produtos em lote.");
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedProductIds.length === 0 || isBulkProcessing) return;
+    const count = selectedProductIds.length;
+    setIsBulkProcessing(true);
+    try {
+      await bulkDeleteProducts(selectedProductIds);
+      setBulkDeleteConfirmOpen(false);
+      setSelectedProductIds([]);
+      toast.success(
+        count === 1 ? "1 produto excluído com sucesso." : `${count} produtos excluídos com sucesso.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir produtos em lote.");
+    } finally {
+      setIsBulkProcessing(false);
     }
   };
 
@@ -516,6 +589,24 @@ export function AdminPanel() {
       (!sale || p.is_on_sale),
   );
 
+  const selectedIdSet = new Set(selectedProductIds);
+  const visibleProductIds = list.map((p) => p.id);
+  const selectedVisibleCount = visibleProductIds.filter((id) => selectedIdSet.has(id)).length;
+  const allVisibleSelected =
+    visibleProductIds.length > 0 && selectedVisibleCount === visibleProductIds.length;
+  const someVisibleSelected =
+    selectedVisibleCount > 0 && selectedVisibleCount < visibleProductIds.length;
+
+  const toggleSelectAllVisible = () => {
+    if (visibleProductIds.length === 0) return;
+    if (allVisibleSelected) {
+      const visibleSet = new Set(visibleProductIds);
+      setSelectedProductIds((prev) => prev.filter((id) => !visibleSet.has(id)));
+    } else {
+      setSelectedProductIds((prev) => Array.from(new Set([...prev, ...visibleProductIds])));
+    }
+  };
+
   if (!allowed) return null;
 
   return (
@@ -675,7 +766,32 @@ export function AdminPanel() {
                 Só promoções
               </label>
             </div>
-            <div className="mt-3 flex justify-end">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/25 px-3.5 py-2.5">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    aria-label="Selecionar todos"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected;
+                    }}
+                    disabled={list.length === 0 || isBulkProcessing}
+                    onChange={toggleSelectAllVisible}
+                  />
+                  <span>Selecionar todos{list.length > 0 ? ` (${list.length})` : ""}</span>
+                </label>
+                {selectedProductIds.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={isBulkProcessing}
+                    onClick={() => setSelectedProductIds([])}
+                    className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Limpar seleção
+                  </button>
+                )}
+              </div>
               <Button
                 type="button"
                 variant="ghost"
@@ -687,111 +803,139 @@ export function AdminPanel() {
                 Gerenciar categorias e {materialLabelPluralLower}
               </Button>
             </div>
-            <div className="mt-6">
-              {list.map((p) => (
-                <div className="admin-table" key={p.id}>
-                  <img
-                    src={p.image_url}
-                    alt={p.name}
-                    className="w-full aspect-square object-cover rounded"
-                  />
-                  <div>
-                    <p className="text-sm font-medium">{p.name}</p>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {p.sku ? `${p.sku} · ` : ""}
-                      {p.category} · {p.material}
-                      {showSizes && p.sizes.length > 0 ? ` · Tam: ${p.sizes.join(", ")}` : ""}
-                    </p>
-                    <div className="flex gap-3 mt-3 flex-wrap">
-                      {(["active", "featured", "in_stock"] as const).map((key, i) => (
-                        <label key={key} className="flex items-center gap-1 text-[10px]">
-                          <input
-                            type="checkbox"
-                            checked={p[key]}
-                            onChange={() => void handleToggleProduct(p, key)}
-                          />
-                          {["Ativo", "Destaque", "Disponível"][i]}
-                        </label>
-                      ))}
+            <div className={`mt-6 ${selectedProductIds.length > 0 ? "pb-28" : ""}`}>
+              {list.map((p) => {
+                const isSelected = selectedIdSet.has(p.id);
+                return (
+                  <div
+                    className={`admin-table rounded-lg px-3 transition-colors ${
+                      isSelected
+                        ? "border border-primary bg-primary/5 ring-1 ring-primary/20 my-1"
+                        : ""
+                    }`}
+                    key={p.id}
+                  >
+                    <div className="relative">
+                      <img
+                        src={p.image_url}
+                        alt={p.name}
+                        className="w-full aspect-square object-cover rounded"
+                      />
+                      <label
+                        onClick={(e) => e.stopPropagation()}
+                        title={`Selecionar ${p.name}`}
+                        className="absolute top-1 left-1 flex items-center justify-center rounded bg-background/95 p-0.5 shadow-xs border border-border/80 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          aria-label={`Selecionar ${p.name}`}
+                          checked={isSelected}
+                          disabled={isBulkProcessing}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => toggleSelectProduct(p.id)}
+                          className="h-4 w-4 cursor-pointer"
+                        />
+                      </label>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{p.name}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {p.sku ? `${p.sku} · ` : ""}
+                        {p.category} · {p.material}
+                        {showSizes && p.sizes.length > 0 ? ` · Tam: ${p.sizes.join(", ")}` : ""}
+                      </p>
+                      <div className="flex gap-3 mt-3 flex-wrap">
+                        {(["active", "featured", "in_stock"] as const).map((key, i) => (
+                          <label key={key} className="flex items-center gap-1 text-[10px]">
+                            <input
+                              type="checkbox"
+                              checked={p[key]}
+                              disabled={isBulkProcessing}
+                              onChange={() => void handleToggleProduct(p, key)}
+                            />
+                            {["Ativo", "Destaque", "Disponível"][i]}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-xs">
+                      {p.is_on_sale && (
+                        <del className="text-muted-foreground block">{money(p.price)}</del>
+                      )}
+                      <strong>{money(priceOf(p))}</strong>
+                      {p.is_on_sale && (
+                        <p className="text-primary text-[10px] mt-1">
+                          {Math.round((1 - p.sale_price / p.price) * 100)}% OFF
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Copiar link para Stories"
+                        aria-label={`Copiar link de ${p.name}`}
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(
+                            `${window.location.origin}/?produto=${p.id}`,
+                          );
+                          toast.success("Link copiado para os Stories!");
+                        }}
+                      >
+                        <LinkIcon />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        title="Editar"
+                        aria-label={`Editar ${p.name}`}
+                        onClick={() => {
+                          productModalSessionRef.current += 1;
+                          lastProductFileRef.current = null;
+                          setAnalyzingAi(false);
+                          setAutoFillOnUpload(false);
+                          setEdit({
+                            ...structuredClone(p),
+                            sizes: showSizes && Array.isArray(p.sizes) ? [...p.sizes] : [],
+                          });
+                          setSizeInfo("");
+                          setInlineOptionType(null);
+                          setInlineOptionValue("");
+                        }}
+                      >
+                        <Pencil />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Duplicar"
+                        aria-label={`Duplicar ${p.name}`}
+                        onClick={async () => {
+                          try {
+                            await duplicateProduct(p);
+                            toast.success("Produto duplicado como inativo.");
+                          } catch (err) {
+                            toast.error(
+                              err instanceof Error ? err.message : "Erro ao duplicar produto.",
+                            );
+                          }
+                        }}
+                      >
+                        <Copy />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Excluir"
+                        aria-label={`Excluir ${p.name}`}
+                        onClick={() => setConfirm({ kind: "products", id: p.id })}
+                      >
+                        <Trash2 />
+                      </Button>
                     </div>
                   </div>
-                  <div className="text-xs">
-                    {p.is_on_sale && (
-                      <del className="text-muted-foreground block">{money(p.price)}</del>
-                    )}
-                    <strong>{money(priceOf(p))}</strong>
-                    {p.is_on_sale && (
-                      <p className="text-primary text-[10px] mt-1">
-                        {Math.round((1 - p.sale_price / p.price) * 100)}% OFF
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex gap-2 flex-wrap">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Copiar link para Stories"
-                      aria-label={`Copiar link de ${p.name}`}
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(
-                          `${window.location.origin}/?produto=${p.id}`,
-                        );
-                        toast.success("Link copiado para os Stories!");
-                      }}
-                    >
-                      <LinkIcon />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      title="Editar"
-                      aria-label={`Editar ${p.name}`}
-                      onClick={() => {
-                        productModalSessionRef.current += 1;
-                        lastProductFileRef.current = null;
-                        setAnalyzingAi(false);
-                        setAutoFillOnUpload(false);
-                        setEdit({
-                          ...structuredClone(p),
-                          sizes: showSizes && Array.isArray(p.sizes) ? [...p.sizes] : [],
-                        });
-                        setSizeInfo("");
-                        setInlineOptionType(null);
-                        setInlineOptionValue("");
-                      }}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Duplicar"
-                      aria-label={`Duplicar ${p.name}`}
-                      onClick={async () => {
-                        try {
-                          await duplicateProduct(p);
-                          toast.success("Produto duplicado como inativo.");
-                        } catch (err) {
-                          toast.error(
-                            err instanceof Error ? err.message : "Erro ao duplicar produto.",
-                          );
-                        }
-                      }}
-                    >
-                      <Copy />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Excluir"
-                      aria-label={`Excluir ${p.name}`}
-                      onClick={() => setConfirm({ kind: "products", id: p.id })}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {!loading && !list.length && (
               <p className="text-sm text-muted-foreground text-center py-12">
@@ -1889,8 +2033,10 @@ export function AdminPanel() {
                 if (!confirm) return;
                 setSaving(true);
                 try {
-                  if (confirm.kind === "products") await deleteProduct(confirm.id);
-                  else if (confirm.kind === "banners") await deleteBanner(confirm.id);
+                  if (confirm.kind === "products") {
+                    await deleteProduct(confirm.id);
+                    setSelectedProductIds((prev) => prev.filter((id) => id !== confirm.id));
+                  } else if (confirm.kind === "banners") await deleteBanner(confirm.id);
                   else await deleteCoupon(confirm.id);
                   setConfirm(null);
                   toast.success("Item excluído.");
@@ -2116,6 +2262,137 @@ export function AdminPanel() {
           </Button>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={(v) => {
+          if (!v && !isBulkProcessing) setBulkDeleteConfirmOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Excluir produtos selecionados?</DialogTitle>
+          <DialogDescription>
+            Tem certeza que deseja excluir {selectedProductIds.length} produto(s) selecionado(s)?
+            Essa ação não pode ser desfeita.
+          </DialogDescription>
+          <div className="flex flex-wrap justify-end gap-3 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isBulkProcessing}
+              onClick={() => setBulkDeleteConfirmOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isBulkProcessing}
+              onClick={() => void handleBulkDelete()}
+            >
+              {isBulkProcessing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                <>
+                  <Trash2 size={14} />
+                  Excluir ({selectedProductIds.length})
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {tab === "Produtos" && selectedProductIds.length > 0 && (
+        <div
+          role="region"
+          aria-label="Ações em lote para produtos selecionados"
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-primary/25 bg-background/95 backdrop-blur shadow-lg"
+        >
+          <div className="shell py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2.5">
+            <div className="flex items-center justify-between md:justify-start gap-3">
+              <span className="inline-flex items-center gap-2 text-xs font-semibold text-foreground">
+                {isBulkProcessing && <Loader2 size={14} className="animate-spin text-primary" />}
+                <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-primary">
+                  {selectedProductIds.length} selecionado(s)
+                </span>
+              </span>
+              <button
+                type="button"
+                disabled={isBulkProcessing}
+                onClick={() => setSelectedProductIds([])}
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X size={13} />
+                Limpar
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBulkProcessing}
+                onClick={() => void handleBulkUpdate({ in_stock: true }, "disponível", "disponíveis")}
+              >
+                <Check size={14} />
+                Disponível
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBulkProcessing}
+                onClick={() =>
+                  void handleBulkUpdate({ in_stock: false }, "indisponível", "indisponíveis")
+                }
+              >
+                <Ban size={14} />
+                Indisponível
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBulkProcessing}
+                onClick={() =>
+                  void handleBulkUpdate({ active: true }, "ativo na vitrine", "ativos na vitrine")
+                }
+              >
+                <Eye size={14} />
+                Ativar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBulkProcessing}
+                onClick={() =>
+                  void handleBulkUpdate(
+                    { active: false },
+                    "desativado da vitrine",
+                    "desativados da vitrine",
+                  )
+                }
+              >
+                <EyeOff size={14} />
+                Desativar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={isBulkProcessing}
+                onClick={() => setBulkDeleteConfirmOpen(true)}
+              >
+                <Trash2 size={14} />
+                Excluir
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <BatchImportDialog
         open={batchOpen}
         onOpenChange={setBatchOpen}

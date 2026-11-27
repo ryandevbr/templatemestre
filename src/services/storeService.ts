@@ -24,7 +24,7 @@ import {
   type ProductRow,
 } from "@/lib/supabase";
 import { normalizeCode } from "@/services/couponService";
-import { deleteStoreImage } from "@/services/storageService";
+import { deleteStoreImage, deleteStoreImages } from "@/services/storageService";
 
 const KEY = "store-template-v1";
 const STORE_EVENT = "store-template-changed";
@@ -336,17 +336,19 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
 function isImageStillReferenced(
   imageUrl: string,
   state: StoreData,
-  exclude?: { kind: "products" | "banners"; id: string },
+  exclude?: { kind: "products" | "banners"; id?: string; ids?: Set<string> },
 ): boolean {
   if (!imageUrl) return false;
+  const isExcluded = (kind: "products" | "banners", id: string) =>
+    exclude?.kind === kind && (exclude.id === id || Boolean(exclude.ids?.has(id)));
   const usedInProducts = state.products.some(
-    (p) => p.image_url === imageUrl && !(exclude?.kind === "products" && p.id === exclude.id),
+    (p) => p.image_url === imageUrl && !isExcluded("products", p.id),
   );
   if (usedInProducts) return true;
   const usedInBanners = state.banners.some(
     (b) =>
       (b.image_url === imageUrl || (b.mobile_image_url ?? "") === imageUrl) &&
-      !(exclude?.kind === "banners" && b.id === exclude.id),
+      !isExcluded("banners", b.id),
   );
   if (usedInBanners) return true;
   return state.profile.avatar === imageUrl;
@@ -380,6 +382,35 @@ export async function removeProduct(id: string, imageUrlToClean?: string): Promi
   }
   if (imageUrlToClean) {
     await deleteStoreImage(imageUrlToClean);
+  }
+}
+
+export type BulkProductPatch = Partial<Pick<Product, "in_stock" | "active">>;
+
+export async function bulkUpdateProductsInDb(
+  ids: string[],
+  patch: BulkProductPatch,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const client = requireSupabase();
+  const { error } = await client.from("products").update(patch).in("id", ids);
+  if (error) {
+    throw new Error(`Erro ao atualizar produtos em lote: ${error.message}`);
+  }
+}
+
+export async function bulkRemoveProductsInDb(
+  ids: string[],
+  imageUrlsToClean: string[] = [],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const client = requireSupabase();
+  const { error } = await client.from("products").delete().in("id", ids);
+  if (error) {
+    throw new Error(`Erro ao excluir produtos em lote: ${error.message}`);
+  }
+  if (imageUrlsToClean.length > 0) {
+    await deleteStoreImages(imageUrlsToClean);
   }
 }
 
@@ -701,6 +732,67 @@ export function useStore(options?: { scope?: StoreScope; enabled?: boolean }) {
     [data],
   );
 
+  const bulkUpdateProducts = useCallback(
+    async (ids: string[], patch: BulkProductPatch) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+
+      if (!isSupabaseConfigured) {
+        const next: StoreData = {
+          ...data,
+          products: data.products.map((p) => (idSet.has(p.id) ? { ...p, ...patch } : p)),
+        };
+        saveStore(next);
+        setData(next);
+        return;
+      }
+
+      await bulkUpdateProductsInDb(ids, patch);
+      setData((prev) => ({
+        ...prev,
+        products: prev.products.map((p) => (idSet.has(p.id) ? { ...p, ...patch } : p)),
+      }));
+      notifyStoreChanged();
+    },
+    [data],
+  );
+
+  const bulkDeleteProducts = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+
+      if (!isSupabaseConfigured) {
+        const next: StoreData = {
+          ...data,
+          products: data.products.filter((p) => !idSet.has(p.id)),
+        };
+        saveStore(next);
+        setData(next);
+        return;
+      }
+
+      const urlsToClean = Array.from(
+        new Set(
+          data.products
+            .filter((p) => idSet.has(p.id) && Boolean(p.image_url))
+            .map((p) => p.image_url)
+            .filter(
+              (url) => !isImageStillReferenced(url, data, { kind: "products", ids: idSet }),
+            ),
+        ),
+      );
+
+      await bulkRemoveProductsInDb(ids, urlsToClean);
+      setData((prev) => ({
+        ...prev,
+        products: prev.products.filter((p) => !idSet.has(p.id)),
+      }));
+      notifyStoreChanged();
+    },
+    [data],
+  );
+
   const saveBanner = useCallback(
     async (banner: Banner) => {
       const existingIndex = data.banners.findIndex((b) => b.id === banner.id);
@@ -934,6 +1026,8 @@ export function useStore(options?: { scope?: StoreScope; enabled?: boolean }) {
     toggleProductField,
     duplicateProduct,
     deleteProduct,
+    bulkUpdateProducts,
+    bulkDeleteProducts,
     saveBanner,
     reorderBanners,
     deleteBanner,
