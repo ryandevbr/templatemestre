@@ -27,7 +27,12 @@ vi.mock("sonner", () => ({
 }));
 
 import { BatchImportDialog } from "@/components/batch-import-dialog";
-import { BATCH_RETRY_ROUNDS, formatRetryCountdownMessage } from "@/lib/batch-retry";
+import {
+  BATCH_RETRY_ROUNDS,
+  buildDemoPromoPricing,
+  formatRetryCountdownMessage,
+  toCommercialPrice,
+} from "@/lib/batch-retry";
 import type { Product } from "@/data/catalog";
 
 describe("BatchImportDialog smart auto-retry", () => {
@@ -140,8 +145,11 @@ describe("BatchImportDialog smart auto-retry", () => {
         materialNames={["Linho", "Crepe"]}
         saveProduct={saveProductMock}
         timingScale={0}
+        enableAiDemoPricing={false}
       />,
     );
+
+    expect(screen.queryByText(/Modo Prévia \(Demonstração\)/i)).not.toBeInTheDocument();
 
     // Step 1: set price and advance
     fireEvent.change(screen.getByPlaceholderText("Ex.: 79.90"), { target: { value: "129.90" } });
@@ -192,6 +200,7 @@ describe("BatchImportDialog smart auto-retry", () => {
         materialNames={["Linho"]}
         saveProduct={saveProductMock}
         timingScale={0}
+        enableAiDemoPricing={false}
       />,
     );
 
@@ -216,5 +225,98 @@ describe("BatchImportDialog smart auto-retry", () => {
     expect(analyzeMock).toHaveBeenCalledTimes(3);
     expect(saveProductMock).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Concluir" })).toBeEnabled();
+  });
+
+  it("normalizes commercial .90 prices and simulates ~25% promo in Modo Prévia", async () => {
+    expect(toCommercialPrice(134.37)).toBe(134.9);
+    expect(toCommercialPrice(12)).toBe(19.9);
+    expect(toCommercialPrice(Number.NaN)).toBe(19.9);
+
+    const promoAt1 = buildDemoPromoPricing(159.9, 1);
+    expect(promoAt1.is_on_sale).toBe(true);
+    expect(promoAt1.sale_price).toBeLessThan(159.9);
+    expect(promoAt1.sale_price.toFixed(2).endsWith(".90")).toBe(true);
+    expect(buildDemoPromoPricing(159.9, 0).is_on_sale).toBe(false);
+
+    const savedProducts: Product[] = [];
+    const saveProductMock = vi.fn(async (product: Product) => {
+      savedProducts.push(product);
+    });
+
+    const estimates: Record<string, number | null> = {
+      "p1.jpg": 134.37,
+      "p2.jpg": 179.9,
+      "p3.jpg": 89.45,
+      "p4.jpg": null, // tests fallback when AI omits estimate
+    };
+
+    analyzeMock.mockImplementation(async ({ file }: { file: File }) => ({
+      name: `Item ${file.name}`,
+      category: "Vestidos",
+      material: "Linho",
+      description: "Descrição",
+      characteristics: [],
+      estimatedPrice: estimates[file.name] ?? null,
+    }));
+
+    uploadMock.mockImplementation(async (file: File) => ({
+      url: `https://storage.example/products/${file.name}`,
+      original: 1000,
+      compressed: 500,
+      wasCompressed: true,
+    }));
+
+    render(
+      <BatchImportDialog
+        open={true}
+        onOpenChange={() => {}}
+        categoryNames={["Vestidos"]}
+        materialNames={["Linho"]}
+        saveProduct={saveProductMock}
+        timingScale={0}
+        enableAiDemoPricing={true}
+      />,
+    );
+
+    expect(screen.getByText(/Modo Prévia \(Demonstração\)/i)).toBeInTheDocument();
+
+    // Advance without entering any batch price (optional when AI pricing is active)
+    const nextBtn = screen.getByRole("button", { name: /Próximo: Selecionar fotos/i });
+    expect(nextBtn).toBeEnabled();
+    fireEvent.click(nextBtn);
+
+    const fileInput = screen.getByLabelText(/Escolher fotos/i) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [
+          new File(["1"], "p1.jpg", { type: "image/jpeg" }),
+          new File(["2"], "p2.jpg", { type: "image/jpeg" }),
+          new File(["3"], "p3.jpg", { type: "image/jpeg" }),
+          new File(["4"], "p4.jpg", { type: "image/jpeg" }),
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/4 fotos selecionadas/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Iniciar importação \(4\)/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Processamento finalizado \(4 de 4 publicados\)/i)).toBeInTheDocument();
+    });
+
+    expect(analyzeMock).toHaveBeenCalledWith(expect.objectContaining({ estimatePrice: true }));
+    expect(savedProducts).toHaveLength(4);
+    expect(savedProducts[0]?.price).toBe(134.9);
+    expect(savedProducts[1]?.price).toBe(179.9);
+    expect(savedProducts[2]?.price).toBe(89.9);
+    expect(savedProducts[3]?.price.toFixed(2).endsWith(".90")).toBe(true);
+
+    const onSale = savedProducts.filter((p) => p.is_on_sale);
+    expect(onSale).toHaveLength(1);
+    expect(onSale[0]?.sale_price).toBeLessThan(onSale[0]?.price ?? 0);
+    expect(onSale[0]?.sale_price.toFixed(2).endsWith(".90")).toBe(true);
   });
 });

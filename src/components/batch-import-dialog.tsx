@@ -28,7 +28,10 @@ import {
 import { money, type Product } from "@/data/catalog";
 import {
   BATCH_RETRY_ROUNDS,
+  NICHE_FALLBACK_DEMO_PRICE,
+  buildDemoPromoPricing,
   formatRetryCountdownMessage,
+  toCommercialPrice,
   type RetryCountdownState,
 } from "@/lib/batch-retry";
 import { normalizeImageFile } from "@/lib/normalize-image";
@@ -57,6 +60,9 @@ interface BatchItem {
   productName?: string | undefined;
   resolvedCategory?: string | undefined;
   resolvedMaterial?: string | undefined;
+  resolvedPrice?: number | undefined;
+  resolvedSalePrice?: number | undefined;
+  resolvedIsOnSale?: boolean | undefined;
 }
 
 export interface BatchImportDialogProps {
@@ -67,6 +73,8 @@ export interface BatchImportDialogProps {
   saveProduct: (product: Product) => Promise<void>;
   /** Opcional para testes: sobrescreve a duração de 1 segundo da contagem regressiva e intervalos */
   timingScale?: number;
+  /** Opcional para testes: sobrescreve STORE_CONFIG.enableAiDemoPricing */
+  enableAiDemoPricing?: boolean;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -113,9 +121,13 @@ export function BatchImportDialog({
   materialNames,
   saveProduct,
   timingScale = 1,
+  enableAiDemoPricing = STORE_CONFIG.enableAiDemoPricing,
 }: BatchImportDialogProps) {
+  const demoPricingEnabled = enableAiDemoPricing === true;
   const [step, setStep] = useState<BatchStep>(1);
   const [price, setPrice] = useState<string>("");
+  const [useAiPricing, setUseAiPricing] = useState<boolean>(demoPricingEnabled);
+  const [simulatePromo, setSimulatePromo] = useState<boolean>(demoPricingEnabled);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [selectedMaterial, setSelectedMaterial] = useState<string>("");
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
@@ -126,6 +138,8 @@ export function BatchImportDialog({
   const [currentAttempt, setCurrentAttempt] = useState<number>(1);
   const [retryCountdown, setRetryCountdown] = useState<RetryCountdownState | null>(null);
 
+  const aiPricingActive = demoPricingEnabled && useAiPricing;
+  const simulatePromoActive = demoPricingEnabled && simulatePromo;
   const showSizes = supportsSizes();
   const availableQuickSizes = getQuickSizesForNiche();
   const nicheDefaults = NICHE_CATALOG_DEFAULTS[STORE_CONFIG.niche];
@@ -164,6 +178,7 @@ export function BatchImportDialog({
 
   const parsedPrice = Number(price.replace(",", "."));
   const hasValidPrice = Number.isFinite(parsedPrice) && parsedPrice > 0;
+  const canProceedStep1 = aiPricingActive || hasValidPrice;
 
   const doneCount = items.filter((item) => item.status === "done").length;
   const failedCount = items.filter((item) => item.status === "failed").length;
@@ -190,6 +205,8 @@ export function BatchImportDialog({
     cancelRequestedRef.current = false;
     setStep(1);
     setPrice("");
+    setUseAiPricing(demoPricingEnabled);
+    setSimulatePromo(demoPricingEnabled);
     setSelectedCategory("");
     setSelectedMaterial("");
     setSelectedSizes([]);
@@ -395,6 +412,7 @@ export function BatchImportDialog({
             availableCategories: effectiveCategoryNames,
             availableMaterials: effectiveMaterialNames,
             niche: STORE_CONFIG.niche,
+            estimatePrice: aiPricingActive,
           });
 
           if (!mountedRef.current) break;
@@ -414,6 +432,21 @@ export function BatchImportDialog({
             value: row.value,
           }));
 
+          const resolvedPrice = aiPricingActive
+            ? typeof analysis.estimatedPrice === "number" &&
+              Number.isFinite(analysis.estimatedPrice) &&
+              analysis.estimatedPrice > 0
+              ? toCommercialPrice(analysis.estimatedPrice)
+              : hasValidPrice
+                ? toCommercialPrice(parsedPrice)
+                : NICHE_FALLBACK_DEMO_PRICE[STORE_CONFIG.niche]
+            : parsedPrice;
+
+          const batchIndex = itemsRef.current.findIndex((item) => item.id === itemId);
+          const promoPricing = simulatePromoActive
+            ? buildDemoPromoPricing(resolvedPrice, batchIndex >= 0 ? batchIndex : i)
+            : { is_on_sale: false, sale_price: 0, sale_label: "" };
+
           updateItem(itemId, (item) => ({
             ...item,
             status: "uploading",
@@ -421,6 +454,9 @@ export function BatchImportDialog({
             productName: resolvedName,
             resolvedCategory,
             resolvedMaterial,
+            resolvedPrice,
+            resolvedSalePrice: promoPricing.sale_price,
+            resolvedIsOnSale: promoPricing.is_on_sale,
           }));
 
           // Faz upload da imagem para o bucket store-media apenas se ainda não tiver sido enviada
@@ -441,10 +477,10 @@ export function BatchImportDialog({
             sku: "",
             category: resolvedCategory,
             material: resolvedMaterial,
-            price: parsedPrice,
-            sale_price: 0,
-            is_on_sale: false,
-            sale_label: "",
+            price: resolvedPrice,
+            sale_price: promoPricing.sale_price,
+            is_on_sale: promoPricing.is_on_sale,
+            sale_label: promoPricing.sale_label,
             image_url: uploadedImageUrl,
             description: analysis.description.trim(),
             active: autoPublish,
@@ -466,6 +502,9 @@ export function BatchImportDialog({
             productName: resolvedName,
             resolvedCategory,
             resolvedMaterial,
+            resolvedPrice,
+            resolvedSalePrice: promoPricing.sale_price,
+            resolvedIsOnSale: promoPricing.is_on_sale,
           }));
           totalPublishedInRun += 1;
           if (round.attempt > 1) {
@@ -532,7 +571,7 @@ export function BatchImportDialog({
   };
 
   const startBatch = () => {
-    if (!hasValidPrice) {
+    if (!aiPricingActive && !hasValidPrice) {
       toast.error("Informe um preço válido para o lote.");
       setStep(1);
       return;
@@ -649,13 +688,40 @@ export function BatchImportDialog({
         <div className="overflow-y-auto min-h-0 flex-1 space-y-5 pr-1 py-1">
           {step === 1 && (
             <div className="space-y-4">
+              {demoPricingEnabled && (
+                <div className="space-y-2.5 rounded-lg border border-primary/30 bg-primary/5 p-3.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-primary">
+                    <Sparkles size={14} className="shrink-0" />
+                    <span>Modo Prévia (Demonstração)</span>
+                  </div>
+                  <label className="flex items-center gap-2.5 text-xs text-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useAiPricing}
+                      onChange={(e) => setUseAiPricing(e.target.checked)}
+                    />
+                    Deixar a IA estimar preços realistas por peça (terminados em ,90)
+                  </label>
+                  <label className="flex items-center gap-2.5 text-xs text-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={simulatePromo}
+                      onChange={(e) => setSimulatePromo(e.target.checked)}
+                    />
+                    Simular etiquetas de promoção em ~25% do lote
+                  </label>
+                </div>
+              )}
+
               <label>
-                Preço único do lote (R$)
+                {aiPricingActive
+                  ? "Preço único do lote (R$ — opcional, usado como fallback)"
+                  : "Preço único do lote (R$)"}
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="Ex.: 79.90"
+                  placeholder={aiPricingActive ? "Opcional — ex.: 99.90" : "Ex.: 79.90"}
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                 />
@@ -793,7 +859,12 @@ export function BatchImportDialog({
                       {items.length === 1
                         ? "1 foto selecionada"
                         : `${items.length} fotos selecionadas`}{" "}
-                      · {money(parsedPrice)} cada
+                      ·{" "}
+                      {aiPricingActive
+                        ? hasValidPrice
+                          ? `Preços via IA (fallback ${money(toCommercialPrice(parsedPrice))})`
+                          : "Preços estimados via IA"
+                        : `${money(parsedPrice)} cada`}
                     </span>
                     <button
                       type="button"
@@ -892,8 +963,14 @@ export function BatchImportDialog({
                       </p>
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                         {item.resolvedCategory && item.resolvedMaterial
-                          ? `${item.resolvedCategory} · ${item.resolvedMaterial} · ${money(parsedPrice)}${showSizes && selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`
-                          : `${money(parsedPrice)} · ${selectedCategory || "Categoria via IA"} · ${selectedMaterial || `${materialLabel} via IA`}${showSizes && selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`}
+                          ? `${item.resolvedCategory} · ${item.resolvedMaterial} · ${
+                              item.resolvedIsOnSale &&
+                              item.resolvedSalePrice &&
+                              item.resolvedPrice
+                                ? `${money(item.resolvedSalePrice)} (de ${money(item.resolvedPrice)})`
+                                : money(item.resolvedPrice ?? parsedPrice)
+                            }${showSizes && selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`
+                          : `${hasValidPrice ? money(parsedPrice) : "Preço via IA"} · ${selectedCategory || "Categoria via IA"} · ${selectedMaterial || `${materialLabel} via IA`}${showSizes && selectedSizes.length > 0 ? ` · Tam: ${selectedSizes.join(", ")}` : ""}`}
                       </p>
                       {item.status === "done" && !autoPublish && (
                         <p className="text-[10px] text-muted-foreground mt-0.5">
@@ -939,9 +1016,9 @@ export function BatchImportDialog({
               </Button>
               <Button
                 type="button"
-                disabled={!hasValidPrice}
+                disabled={!canProceedStep1}
                 onClick={() => {
-                  if (!hasValidPrice) {
+                  if (!canProceedStep1) {
                     toast.error("Informe um preço válido maior que zero.");
                     return;
                   }

@@ -13,6 +13,7 @@ export interface AiProductAnalysis {
   material: string;
   description: string;
   characteristics: AiProductCharacteristic[];
+  estimatedPrice?: number | null | undefined;
 }
 
 export interface AiProductMeta {
@@ -26,6 +27,7 @@ export interface AnalyzeProductParams {
   availableCategories: string[];
   availableMaterials: string[];
   niche?: StoreNiche;
+  estimatePrice?: boolean;
 }
 
 interface AnalyzeApiResponse {
@@ -87,10 +89,12 @@ export async function analyzeProductWithAi(
     availableCategories: string[];
     availableMaterials: string[];
     niche: StoreNiche;
+    estimatePrice?: boolean;
   } = {
     availableCategories: params.availableCategories,
     availableMaterials: params.availableMaterials,
     niche: params.niche ?? STORE_CONFIG.niche,
+    ...(params.estimatePrice ? { estimatePrice: true } : {}),
   };
 
   if (params.file) {

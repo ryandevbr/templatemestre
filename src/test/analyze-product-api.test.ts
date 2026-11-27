@@ -328,9 +328,63 @@ describe("POST /api/analyze-product multi-provider cascade", () => {
     expect(capturedBody).not.toContain("Semijoia");
 
     const json = (await res.json()) as {
-      data: { name: string; category: string; material: string };
+      data: { name: string; category: string; material: string; estimatedPrice?: number | null };
     };
     expect(json.data.category).toBe("Sandálias");
     expect(json.data.material).toBe("Napa");
+    expect(json.data.estimatedPrice).toBeUndefined();
+  });
+
+  it("includes niche price guidance and normalized .90 estimatedPrice when estimatePrice is true", async () => {
+    process.env["GROQ_API_KEY"] = "groq-test";
+
+    let capturedBody = "";
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      capturedBody = typeof init?.body === "string" ? init.body : "";
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  name: "Vestido Longo Linho",
+                  category: "Vestidos",
+                  material: "Linho",
+                  description: "Caimento impecável para dias especiais.",
+                  characteristics: [
+                    { label: "Tecido", value: "Linho" },
+                    { label: "Caimento", value: "Fluido" },
+                    { label: "Ocasião", value: "Eventos" },
+                  ],
+                  estimatedPrice: 174.37,
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const req = new Request("http://localhost/api/analyze-product", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: SAMPLE_BASE64,
+        mimeType: "image/webp",
+        niche: "moda",
+        estimatePrice: true,
+      }),
+    });
+
+    const res = await handleAnalyzeProductRequest(req);
+    expect(res.status).toBe(200);
+    expect(capturedBody).toContain("estimatedPrice");
+    expect(capturedBody).toContain("119.90 e 219.90");
+
+    const json = (await res.json()) as {
+      data: { estimatedPrice?: number | null };
+    };
+    expect(json.data.estimatedPrice).toBe(174.9);
   });
 });

@@ -38,6 +38,7 @@ export interface StoreConfig {
   tagline?: string;
   aboutTitle?: string;
   aboutText?: string;
+  enableAiDemoPricing: boolean;
 }
 
 /**
@@ -48,6 +49,7 @@ export interface StoreConfig {
 export const STORE_CONFIG: StoreConfig = {
   name: "Minha Loja",
   niche: "moda", // "moda" | "calcados" | "acessorios"
+  enableAiDemoPricing: true, // Mude para false antes de entregar o painel ao cliente final
   whatsapp: "5531999999999",
   whatsappDisplay: "(31) 99999-9999",
   instagramHandle: "@minhaloja",
