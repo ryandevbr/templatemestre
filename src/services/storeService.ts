@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { getDefaultBannerAlt } from "@/config/store.config";
+import { ACTIVE_STORE_SLUG, getDefaultBannerAlt } from "@/config/store.config";
 import {
   defaultPromotion,
   emptyStoreData,
@@ -26,7 +26,7 @@ import {
 import { normalizeCode } from "@/services/couponService";
 import { deleteStoreImage, deleteStoreImages } from "@/services/storageService";
 
-const KEY = "store-template-v1";
+const KEY = `store-template-v1-${ACTIVE_STORE_SLUG}`;
 const STORE_EVENT = "store-template-changed";
 const DEFAULT_BANNER_ALT = getDefaultBannerAlt();
 
@@ -43,7 +43,8 @@ interface HeroBannerRow {
 }
 
 interface StoreSettingsRow {
-  id: number;
+  id: string;
+  store_slug?: string | null;
   announcement_active: boolean;
   announcement_text: string | null;
   announcement_link: string | null;
@@ -57,7 +58,7 @@ interface StoreSettingsRow {
 }
 
 const STORE_SETTINGS_COLUMNS =
-  "id, announcement_active, announcement_text, announcement_link, promo_active, promo_badge, promo_title, promo_description, promo_highlight, promo_cta_label, promo_cta_type";
+  "id, store_slug, announcement_active, announcement_text, announcement_link, promo_active, promo_badge, promo_title, promo_description, promo_highlight, promo_cta_label, promo_cta_type";
 
 function mapPromotionRow(row: StoreSettingsRow | null): StorePromotion {
   if (!row) return { ...defaultPromotion };
@@ -118,6 +119,7 @@ function mapCouponRow(row: CouponRow): Coupon {
 function toBannerPayload(banner: Banner, displayOrder: number) {
   return {
     id: banner.id || crypto.randomUUID(),
+    store_slug: ACTIVE_STORE_SLUG,
     image_url: banner.image_url.trim(),
     mobile_image_url: null,
     alt: banner.alt.trim() || DEFAULT_BANNER_ALT,
@@ -131,6 +133,7 @@ function toCouponPayload(coupon: Coupon) {
   const normalizedExpiresAt = coupon.expires_at.trim();
   return {
     id: coupon.id || crypto.randomUUID(),
+    store_slug: ACTIVE_STORE_SLUG,
     code: normalizeCode(coupon.code),
     type: coupon.type === "fixed" ? "fixed" : "percent",
     value: Number(coupon.value),
@@ -194,18 +197,21 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
   let productsQuery = supabase
     .from("products")
     .select(PRODUCT_SELECT_COLUMNS)
+    .eq("store_slug", ACTIVE_STORE_SLUG)
     .order("featured", { ascending: false })
     .order("created_at", { ascending: false });
 
   let bannersQuery = supabase
     .from("hero_banners")
     .select("id, image_url, mobile_image_url, alt, active, filter, display_order")
+    .eq("store_slug", ACTIVE_STORE_SLUG)
     .order("display_order", { ascending: true })
     .order("created_at", { ascending: true });
 
   let couponsQuery = supabase
     .from("coupons")
     .select("id, code, type, value, min_order_value, expires_at, active, allow_on_sale")
+    .eq("store_slug", ACTIVE_STORE_SLUG)
     .order("created_at", { ascending: false });
 
   if (scope === "public") {
@@ -217,7 +223,7 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
   const settingsQuery = supabase
     .from("store_settings")
     .select(STORE_SETTINGS_COLUMNS)
-    .eq("id", 1)
+    .eq("store_slug", ACTIVE_STORE_SLUG)
     .maybeSingle();
 
   const [productsRes, bannersRes, couponsRes, settingsRes] = await Promise.all([
@@ -233,6 +239,7 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
       let fallbackProductsQuery = supabase
         .from("products")
         .select(PRODUCT_SELECT_COLUMNS_LEGACY)
+        .eq("store_slug", ACTIVE_STORE_SLUG)
         .order("featured", { ascending: false })
         .order("created_at", { ascending: false });
       if (scope === "public") {
@@ -256,6 +263,7 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
       let fallbackBannersQuery = supabase
         .from("hero_banners")
         .select("id, image_url, alt, active, filter, display_order")
+        .eq("store_slug", ACTIVE_STORE_SLUG)
         .order("display_order", { ascending: true })
         .order("created_at", { ascending: true });
       if (scope === "public") {
@@ -278,8 +286,8 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
     if (settingsRes.error.code === "42703" || settingsRes.error.message.includes("promo_")) {
       const fallbackSettingsRes = await supabase
         .from("store_settings")
-        .select("id, announcement_active, announcement_text, announcement_link")
-        .eq("id", 1)
+        .select("id, store_slug, announcement_active, announcement_text, announcement_link")
+        .eq("store_slug", ACTIVE_STORE_SLUG)
         .maybeSingle();
       if (fallbackSettingsRes.error) {
         throw new Error(`Erro ao carregar configurações: ${fallbackSettingsRes.error.message}`);
@@ -306,8 +314,9 @@ export async function fetchStoreData(scope: StoreScope = "public"): Promise<Stor
     if (user) {
       const profileRes = await supabase
         .from("admin_profiles")
-        .select("id, name, email, avatar_url")
+        .select("id, store_slug, name, email, avatar_url")
         .eq("id", user.id)
+        .eq("store_slug", ACTIVE_STORE_SLUG)
         .maybeSingle();
 
       if (profileRes.error) {
@@ -376,7 +385,11 @@ export async function upsertProduct(product: Product, previousImageUrl?: string)
 
 export async function removeProduct(id: string, imageUrlToClean?: string): Promise<void> {
   const client = requireSupabase();
-  const { error } = await client.from("products").delete().eq("id", id);
+  const { error } = await client
+    .from("products")
+    .delete()
+    .eq("id", id)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao excluir produto: ${error.message}`);
   }
@@ -393,7 +406,11 @@ export async function bulkUpdateProductsInDb(
 ): Promise<void> {
   if (ids.length === 0) return;
   const client = requireSupabase();
-  const { error } = await client.from("products").update(patch).in("id", ids);
+  const { error } = await client
+    .from("products")
+    .update(patch)
+    .in("id", ids)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao atualizar produtos em lote: ${error.message}`);
   }
@@ -405,7 +422,11 @@ export async function bulkRemoveProductsInDb(
 ): Promise<void> {
   if (ids.length === 0) return;
   const client = requireSupabase();
-  const { error } = await client.from("products").delete().in("id", ids);
+  const { error } = await client
+    .from("products")
+    .delete()
+    .in("id", ids)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao excluir produtos em lote: ${error.message}`);
   }
@@ -459,7 +480,11 @@ export async function saveBannersOrder(banners: Banner[]): Promise<Banner[]> {
 
 export async function removeBanner(id: string, imageUrlsToClean: string[] = []): Promise<void> {
   const client = requireSupabase();
-  const { error } = await client.from("hero_banners").delete().eq("id", id);
+  const { error } = await client
+    .from("hero_banners")
+    .delete()
+    .eq("id", id)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao excluir banner: ${error.message}`);
   }
@@ -475,7 +500,7 @@ export async function saveStoreAnnouncement(
 ): Promise<StoreAnnouncement> {
   const client = requireSupabase();
   const payload = {
-    id: 1,
+    store_slug: ACTIVE_STORE_SLUG,
     announcement_active: Boolean(announcement.active),
     announcement_text: announcement.text.trim(),
     announcement_link: announcement.link.trim() || "#vitrine",
@@ -483,8 +508,8 @@ export async function saveStoreAnnouncement(
 
   const { data, error } = await client
     .from("store_settings")
-    .upsert(payload, { onConflict: "id" })
-    .select("id, announcement_active, announcement_text, announcement_link")
+    .upsert(payload, { onConflict: "store_slug" })
+    .select("id, store_slug, announcement_active, announcement_text, announcement_link")
     .single();
 
   if (error || !data) {
@@ -502,7 +527,7 @@ export async function saveStoreAnnouncement(
 export async function saveStorePromotion(promotion: StorePromotion): Promise<StorePromotion> {
   const client = requireSupabase();
   const payload = {
-    id: 1,
+    store_slug: ACTIVE_STORE_SLUG,
     promo_active: Boolean(promotion.promo_active),
     promo_badge: promotion.promo_badge.trim() || defaultPromotion.promo_badge,
     promo_title: promotion.promo_title.trim(),
@@ -514,7 +539,7 @@ export async function saveStorePromotion(promotion: StorePromotion): Promise<Sto
 
   const { data, error } = await client
     .from("store_settings")
-    .upsert(payload, { onConflict: "id" })
+    .upsert(payload, { onConflict: "store_slug" })
     .select(STORE_SETTINGS_COLUMNS)
     .single();
 
@@ -546,7 +571,11 @@ export async function upsertCoupon(coupon: Coupon): Promise<Coupon> {
 
 export async function removeCoupon(id: string): Promise<void> {
   const client = requireSupabase();
-  const { error } = await client.from("coupons").delete().eq("id", id);
+  const { error } = await client
+    .from("coupons")
+    .delete()
+    .eq("id", id)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao excluir cupom: ${error.message}`);
   }
@@ -564,6 +593,7 @@ export async function saveAdminProfile(
 
   const payload = {
     id: userData.user.id,
+    store_slug: ACTIVE_STORE_SLUG,
     name: profile.name.trim() || "Administradora",
     email: profile.email.trim() || userData.user.email || "",
     avatar_url: profile.avatar.trim(),
@@ -572,7 +602,7 @@ export async function saveAdminProfile(
   const { data, error } = await client
     .from("admin_profiles")
     .upsert(payload, { onConflict: "id" })
-    .select("id, name, email, avatar_url")
+    .select("id, store_slug, name, email, avatar_url")
     .single();
 
   if (error || !data) {

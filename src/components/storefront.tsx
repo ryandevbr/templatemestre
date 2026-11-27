@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
+  ACTIVE_STORE_SLUG,
   NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   getDefaultBannerAlt,
@@ -77,7 +78,7 @@ function getDefaultSelectedSize(sizes: string[]): string {
   return "";
 }
 
-const BAG_STORAGE_KEY = "store-bag-v1";
+const BAG_STORAGE_KEY = `store-bag-v1-${ACTIVE_STORE_SLUG}`;
 const PRODUCTS_PER_PAGE = 16;
 
 export function Storefront() {

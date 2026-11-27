@@ -5,7 +5,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { STORE_CONFIG } from "@/config/store.config";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { enterDemoSession, getAuthState, signInAdmin } from "@/services/authService";
+import {
+  WRONG_STORE_ACCOUNT_ERROR,
+  enterDemoSession,
+  getAuthState,
+  signInAdmin,
+} from "@/services/authService";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -31,8 +36,11 @@ function Login() {
   useEffect(() => {
     let active = true;
     void getAuthState().then((state) => {
-      if (active && state.authenticated) {
+      if (!active) return;
+      if (state.authenticated) {
         void navigate({ to: "/admin" });
+      } else if (state.unauthorizedStore) {
+        toast.error(WRONG_STORE_ACCOUNT_ERROR, { id: "wrong-store-account" });
       }
     });
     return () => {

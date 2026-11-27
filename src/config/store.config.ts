@@ -25,6 +25,8 @@ export interface StoreHeroConfig {
 }
 
 export interface StoreConfig {
+  /** Identificador único da loja em minúsculas sem espaços (ex.: "patricia-hermogenes-modas") */
+  slug: string;
   name: string;
   niche: StoreNiche;
   whatsapp: string;
@@ -43,10 +45,12 @@ export interface StoreConfig {
 
 /**
  * Configuração central White-Label da loja.
- * Altere apenas este arquivo para adaptar nome, nicho ("moda", "calcados" ou "acessorios"),
+ * Altere apenas este arquivo para adaptar slug, nome, nicho ("moda", "calcados" ou "acessorios"),
  * contatos, loja física, paleta de cores e textos principais.
  */
 export const STORE_CONFIG: StoreConfig = {
+  // Identificador único da loja em minúsculas sem espaços (ex.: "patricia-hermogenes-modas")
+  slug: import.meta.env.VITE_STORE_SLUG || "loja-modelo",
   name: "Minha Loja",
   niche: "moda", // "moda" | "calcados" | "acessorios"
   enableAiDemoPricing: true, // Mude para false antes de entregar o painel ao cliente final
@@ -82,6 +86,8 @@ export const STORE_CONFIG: StoreConfig = {
   aboutText:
     "Acreditamos que os detalhes revelam quem você é. Nossa curadoria reúne estilo, qualidade e personalidade para acompanhar o seu cotidiano e os seus momentos mais especiais, com atendimento próximo e envio para todo o Brasil.",
 };
+
+export const ACTIVE_STORE_SLUG = STORE_CONFIG.slug.trim().toLowerCase() || "loja-modelo";
 
 export const QUICK_SIZES = [
   "PP",

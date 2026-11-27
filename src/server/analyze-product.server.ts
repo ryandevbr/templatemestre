@@ -1,10 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  ACTIVE_STORE_SLUG,
   NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   type StoreNiche,
 } from "@/config/store.config";
 import { toCommercialPrice } from "@/lib/batch-retry";
+import { WRONG_STORE_ACCOUNT_ERROR, isUserAuthorizedForStore } from "@/lib/tenant-auth";
 
 export type AiProviderName = "groq" | "gemini" | "openrouter";
 
@@ -232,6 +234,18 @@ async function verifyAdminAuth(request: Request): Promise<Response | null> {
       { code: "UNAUTHORIZED", error: "Sessão inválida ou expirada. Faça login novamente." },
       401,
     );
+  }
+
+  const activeStoreSlug = (
+    process.env["STORE_SLUG"] ??
+    process.env["VITE_STORE_SLUG"] ??
+    ACTIVE_STORE_SLUG
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!isUserAuthorizedForStore(data.user.user_metadata, activeStoreSlug)) {
+    return jsonResponse({ code: "FORBIDDEN", error: WRONG_STORE_ACCOUNT_ERROR }, 403);
   }
 
   return null;

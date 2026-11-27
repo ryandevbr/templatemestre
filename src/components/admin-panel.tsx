@@ -37,7 +37,12 @@ import {
   type CatalogOptionType,
 } from "@/services/catalogOptionsService";
 import { analyzeProductWithAi, isAnalyzableImageUrl } from "@/services/aiProductService";
-import { getAuthState, signOutAdmin, subscribeAuthChanges } from "@/services/authService";
+import {
+  WRONG_STORE_ACCOUNT_ERROR,
+  getAuthState,
+  signOutAdmin,
+  subscribeAuthChanges,
+} from "@/services/authService";
 import {
   deleteStoreImage,
   uploadOriginalBannerImage,
@@ -203,6 +208,9 @@ export function AdminPanel() {
     void getAuthState().then((state) => {
       if (!active) return;
       if (!state.authenticated) {
+        if (state.unauthorizedStore) {
+          toast.error(WRONG_STORE_ACCOUNT_ERROR, { id: "wrong-store-account" });
+        }
         void navigate({ to: "/login" });
       } else {
         setAllowed(true);
@@ -212,6 +220,9 @@ export function AdminPanel() {
     const unsubscribe = subscribeAuthChanges((state) => {
       if (!state.authenticated) {
         setAllowed(false);
+        if (state.unauthorizedStore) {
+          toast.error(WRONG_STORE_ACCOUNT_ERROR, { id: "wrong-store-account" });
+        }
         void navigate({ to: "/login" });
       }
     });

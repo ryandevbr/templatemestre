@@ -59,6 +59,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/services/authService", () => ({
+  WRONG_STORE_ACCOUNT_ERROR: "Esta conta administrativa pertence a outra loja.",
   getAuthState: async () => ({
     authenticated: true,
     email: "admin@loja.com",

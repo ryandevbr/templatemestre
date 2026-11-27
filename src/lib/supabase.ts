@@ -1,9 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { ACTIVE_STORE_SLUG } from "@/config/store.config";
 import type { Product, ProductCharacteristic } from "@/types";
 
-const supabaseUrl = (import.meta.env["VITE_SUPABASE_URL"] as string | undefined)?.trim() ?? "";
-const supabaseAnonKey =
-  (import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined)?.trim() ?? "";
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? "").trim();
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
 
 export const STORE_MEDIA_BUCKET = "store-media";
 
@@ -104,6 +104,7 @@ export function mapProductRow(row: ProductRow): Product {
 export function toProductPayload(product: Product) {
   return {
     id: product.id || crypto.randomUUID(),
+    store_slug: ACTIVE_STORE_SLUG,
     name: product.name.trim(),
     sku: product.sku.trim(),
     category: product.category,

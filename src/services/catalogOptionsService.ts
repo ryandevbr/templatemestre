@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ACTIVE_STORE_SLUG,
   NICHE_CATALOG_DEFAULTS,
   STORE_CONFIG,
   getMaterialLabel,
@@ -17,7 +18,7 @@ export interface CatalogOption {
   created_at: string;
 }
 
-const STORAGE_KEY = `store-catalog-options-v1-${STORE_CONFIG.niche}`;
+const STORAGE_KEY = `store-catalog-options-v1-${ACTIVE_STORE_SLUG}-${STORE_CONFIG.niche}`;
 const OPTIONS_EVENT = "store-catalog-options-changed";
 
 export function normalizeOptionName(name: string): string {
@@ -68,7 +69,8 @@ async function hasAnyProductInDatabase(): Promise<boolean> {
   if (!isSupabaseConfigured || !supabase) return false;
   const { count, error } = await supabase
     .from("products")
-    .select("id", { count: "exact", head: true });
+    .select("id", { count: "exact", head: true })
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     // Em caso de falha na checagem de contagem, evita substituir opções existentes por segurança
     return true;
@@ -98,8 +100,16 @@ export function buildDefaultOptions(niche: StoreNiche = STORE_CONFIG.niche): Cat
 function buildSeedPayload(niche: StoreNiche = STORE_CONFIG.niche) {
   const defaults = NICHE_CATALOG_DEFAULTS[niche];
   return [
-    ...defaults.categories.map((name) => ({ type: "category" as const, name })),
-    ...defaults.materials.map((name) => ({ type: "material" as const, name })),
+    ...defaults.categories.map((name) => ({
+      store_slug: ACTIVE_STORE_SLUG,
+      type: "category" as const,
+      name,
+    })),
+    ...defaults.materials.map((name) => ({
+      store_slug: ACTIVE_STORE_SLUG,
+      type: "material" as const,
+      name,
+    })),
   ];
 }
 
@@ -176,6 +186,7 @@ export async function listCatalogOptions(): Promise<CatalogOption[]> {
   const { data, error } = await supabase
     .from("catalog_options")
     .select("id, type, name, created_at")
+    .eq("store_slug", ACTIVE_STORE_SLUG)
     .order("created_at", { ascending: true })
     .order("name", { ascending: true });
 
@@ -233,7 +244,8 @@ export async function resetCatalogOptionsToNicheDefaults(
       .in(
         "id",
         existing.map((item) => item.id),
-      );
+      )
+      .eq("store_slug", ACTIVE_STORE_SLUG);
     if (deleteError) {
       throw new Error(`Erro ao limpar opções anteriores: ${deleteError.message}`);
     }
@@ -293,7 +305,7 @@ export async function addCatalogOption(
 
   const { data, error } = await client
     .from("catalog_options")
-    .insert({ type, name })
+    .insert({ store_slug: ACTIVE_STORE_SLUG, type, name })
     .select("id, type, name, created_at")
     .single();
 
@@ -320,7 +332,11 @@ export async function deleteCatalogOption(id: string): Promise<void> {
   }
 
   const client = requireSupabase();
-  const { error } = await client.from("catalog_options").delete().eq("id", id);
+  const { error } = await client
+    .from("catalog_options")
+    .delete()
+    .eq("id", id)
+    .eq("store_slug", ACTIVE_STORE_SLUG);
   if (error) {
     throw new Error(`Erro ao excluir opção: ${error.message}`);
   }
